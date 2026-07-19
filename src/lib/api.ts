@@ -71,4 +71,7 @@ export const api = {
 
   getShared: (slug: string) =>
     request<{ project: Project; client: { name: string } }>(`/share/${slug}`),
+
+  summarize: (text: string) =>
+    request<{ summary: string }>("/ai/summarize", { method: "POST", body: JSON.stringify({ text }) }),
 };

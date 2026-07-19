@@ -140,6 +140,8 @@ export default function ProjectDetail() {
             />
           </div>
 
+          <AiSummarizer onUseSummary={(s) => setInstructions(s)} />
+
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Final Export Link</label>
             <input
@@ -201,6 +203,81 @@ export default function ProjectDetail() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AiSummarizer({ onUseSummary }: { onUseSummary: (summary: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [clientMessage, setClientMessage] = useState("");
+  const [summary, setSummary] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSummarize() {
+    if (!clientMessage.trim()) return;
+    setWorking(true);
+    setError("");
+    setSummary("");
+    try {
+      const res = await api.summarize(clientMessage);
+      setSummary(res.summary);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong — try again.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-brand-500/30 bg-brand-500/5">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-brand-300"
+      >
+        <span>✨ AI Assistant — summarize a client message</span>
+        <span className="text-brand-400">{open ? "−" : "+"}</span>
+      </button>
+
+      {open && (
+        <div className="space-y-3 px-4 pb-4">
+          <p className="text-xs text-slate-400">
+            Paste the client's raw message (email, text, voice-note transcript) and get a clean editing
+            brief back.
+          </p>
+          <textarea
+            value={clientMessage}
+            onChange={(e) => setClientMessage(e.target.value)}
+            rows={5}
+            placeholder="Paste the client's message here..."
+            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+          />
+          <button
+            type="button"
+            onClick={handleSummarize}
+            disabled={working || !clientMessage.trim()}
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {working ? "Summarizing..." : "Summarize"}
+          </button>
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          {summary && (
+            <div className="space-y-2">
+              <div className="whitespace-pre-wrap rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm text-slate-300">
+                {summary}
+              </div>
+              <button
+                type="button"
+                onClick={() => onUseSummary(summary)}
+                className="rounded-lg border border-brand-500/50 px-3 py-1.5 text-sm font-medium text-brand-300 hover:bg-brand-500/10"
+              >
+                Use as Instructions ↑
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

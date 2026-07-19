@@ -6,6 +6,7 @@ A simple client management dashboard for freelance video editing work.
 - **Client page** → their Drive folder link + all their projects + how much they owe (per-video) or their monthly retainer rate
 - **Project card** → footage link, reference video link(s) the client sent, editing instructions, final export link, status, price and paid/unpaid
 - **Share link** → every project has a unique public URL you can send to the client, showing a read-only view (instructions, footage, final export) — no login required for them
+- **AI Assistant** → paste a client's raw message on any project card and Workers AI summarizes it into a clean editing brief (deliverable specs, style, music, edit notes, deadline, open questions) you can drop straight into the Instructions field
 
 Everything else (the dashboard itself) is behind a single shared passphrase, since it holds all your client links in one place.
 

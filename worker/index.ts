@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  AI: { run(model: string, options: Record<string, unknown>): Promise<{ response?: string }> };
   ADMIN_PASSPHRASE: string;
   AUTH_SECRET: string;
 }
@@ -254,6 +255,42 @@ async function deleteProject(env: Env, id: string): Promise<Response> {
   return new Response(null, { status: 204 });
 }
 
+async function summarizeInstructions(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => ({}))) as any;
+  const text = body.text;
+  if (!text || typeof text !== "string" || !text.trim()) {
+    return errorResponse("Paste the client's message first");
+  }
+  if (text.length > 20000) {
+    return errorResponse("Message is too long (20k character max)");
+  }
+
+  let result;
+  try {
+    result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [
+      {
+        role: "system",
+        content:
+          "You are an assistant for a freelance video editor. The user will paste a raw message from a client " +
+          "describing what they want for a video edit. Summarize it into a clean, actionable brief the editor can " +
+          "work from. Use short bullet points grouped under these headings when relevant: Deliverable (format, " +
+          "length, aspect ratio, platform), Style & Tone, Music/Audio, Specific Edit Notes, Deadline, Open Questions " +
+          "(anything unclear or missing the editor should ask the client about). Keep only information actually in " +
+          "the message — never invent details. Be concise.",
+      },
+      { role: "user", content: text },
+      ],
+      max_tokens: 800,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "AI request failed";
+    return errorResponse(`AI error: ${message}`, 502);
+  }
+
+  return json({ summary: result.response ?? "" });
+}
+
 async function getShared(env: Env, slug: string): Promise<Response> {
   const project = await env.DB.prepare(`SELECT * FROM projects WHERE share_slug = ?`).bind(slug).first();
   if (!project) return errorResponse("Not found", 404);
@@ -290,6 +327,8 @@ export default {
     if (!(await isAuthed(request, env))) {
       return errorResponse("Unauthorized", 401);
     }
+
+    if (path === "/api/ai/summarize" && method === "POST") return summarizeInstructions(request, env);
 
     if (path === "/api/clients" && method === "GET") return listClients(env);
     if (path === "/api/clients" && method === "POST") return createClient(request, env);

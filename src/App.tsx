@@ -5,6 +5,7 @@ import ClientDetail from "./pages/ClientDetail";
 import ProjectDetail from "./pages/ProjectDetail";
 import SharePage from "./pages/SharePage";
 import Login from "./pages/Login";
+import Header from "./components/Header";
 import { api, UnauthorizedError } from "./lib/api";
 
 function useAuth() {
@@ -40,6 +41,7 @@ export default function App() {
         path="/*"
         element={
           <RequireAuth>
+            <Header />
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/clients/:clientId" element={<ClientDetail />} />
