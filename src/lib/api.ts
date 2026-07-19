@@ -9,9 +9,21 @@ export type Project = {
   export_link: string | null;
   price: number | null;
   paid: 0 | 1;
+  created_date: string;
+  completed_date: string | null;
   share_slug: string;
   created_at: string;
   updated_at: string;
+};
+
+export type CalendarEvent = {
+  id: string;
+  name: string;
+  status: Project["status"];
+  created_date: string;
+  completed_date: string | null;
+  client_id: string;
+  client_name: string;
 };
 
 export type BillingType = "per_project" | "retainer";
@@ -74,4 +86,6 @@ export const api = {
 
   summarize: (text: string) =>
     request<{ summary: string }>("/ai/summarize", { method: "POST", body: JSON.stringify({ text }) }),
+
+  getCalendar: () => request<CalendarEvent[]>("/calendar"),
 };

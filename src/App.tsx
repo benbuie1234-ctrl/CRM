@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Dashboard from "./pages/Dashboard";
 import ClientDetail from "./pages/ClientDetail";
 import ProjectDetail from "./pages/ProjectDetail";
+import CalendarView from "./pages/CalendarView";
 import SharePage from "./pages/SharePage";
 import Login from "./pages/Login";
 import Header from "./components/Header";
@@ -44,6 +45,7 @@ export default function App() {
             <Header />
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/calendar" element={<CalendarView />} />
               <Route path="/clients/:clientId" element={<ClientDetail />} />
               <Route path="/clients/:clientId/projects/:projectId" element={<ProjectDetail />} />
               <Route path="*" element={<Navigate to="/" replace />} />

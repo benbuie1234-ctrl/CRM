@@ -21,6 +21,8 @@ export default function ProjectDetail() {
   const [exportLink, setExportLink] = useState("");
   const [price, setPrice] = useState("");
   const [paid, setPaid] = useState(false);
+  const [createdDate, setCreatedDate] = useState("");
+  const [completedDate, setCompletedDate] = useState("");
 
   useEffect(() => {
     if (!projectId) return;
@@ -34,6 +36,8 @@ export default function ProjectDetail() {
       setExportLink(p.export_link || "");
       setPrice(p.price != null ? String(p.price) : "");
       setPaid(Boolean(p.paid));
+      setCreatedDate(p.created_date || "");
+      setCompletedDate(p.completed_date || "");
       setLoading(false);
     });
   }, [projectId]);
@@ -50,8 +54,12 @@ export default function ProjectDetail() {
       export_link: exportLink || null,
       price: price ? Number(price) : null,
       paid: (paid ? 1 : 0) as 0 | 1,
+      created_date: createdDate,
+      completed_date: completedDate || null,
     });
     setProject(updated);
+    setCreatedDate(updated.created_date || "");
+    setCompletedDate(updated.completed_date || "");
     setSaving(false);
   }
 
@@ -104,6 +112,28 @@ export default function ProjectDetail() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-400">Created Date</label>
+              <input
+                type="date"
+                value={createdDate}
+                onChange={(e) => setCreatedDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-400">Completed Date</label>
+              <input
+                type="date"
+                value={completedDate}
+                onChange={(e) => setCompletedDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              />
+              <p className="mt-1 text-xs text-slate-500">Auto-fills when status is set to Delivered.</p>
+            </div>
           </div>
 
           <div>

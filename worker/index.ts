@@ -179,17 +179,21 @@ async function createProject(request: Request, env: Env, clientId: string): Prom
   if (!client) return errorResponse("Client not found", 404);
 
   const body = (await request.json().catch(() => ({}))) as any;
-  const { name, status, footage_link, reference_links, instructions, export_link, price, paid } = body;
+  const { name, status, footage_link, reference_links, instructions, export_link, price, paid, created_date } =
+    body;
 
   if (!name || !String(name).trim()) return errorResponse("Project name is required");
 
   const id = newId();
   const slug = newSlug();
+  const today = new Date().toISOString().slice(0, 10);
+  const completedDate = status === "delivered" ? today : null;
 
   await env.DB.prepare(
     `INSERT INTO projects
-       (id, client_id, name, status, footage_link, reference_links, instructions, export_link, price, paid, share_slug)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, client_id, name, status, footage_link, reference_links, instructions, export_link, price, paid,
+        created_date, completed_date, share_slug)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
@@ -202,6 +206,8 @@ async function createProject(request: Request, env: Env, clientId: string): Prom
       export_link || null,
       price ?? null,
       paid ? 1 : 0,
+      created_date || today,
+      completedDate,
       slug
     )
     .run();
@@ -230,6 +236,15 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   const export_link = body.export_link !== undefined ? body.export_link : ex.export_link;
   const price = body.price !== undefined ? body.price : ex.price;
   const paid = body.paid !== undefined ? (body.paid ? 1 : 0) : ex.paid;
+  const created_date = body.created_date !== undefined ? body.created_date : ex.created_date;
+
+  let completed_date = body.completed_date !== undefined ? body.completed_date : ex.completed_date;
+  if (status === "delivered" && !completed_date) {
+    completed_date = new Date().toISOString().slice(0, 10);
+  }
+  if (status !== "delivered" && body.completed_date === undefined) {
+    completed_date = ex.completed_date;
+  }
 
   if (!name || !String(name).trim()) return errorResponse("Project name is required");
   if (!VALID_STATUSES.includes(status)) return errorResponse("Invalid status");
@@ -237,10 +252,22 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   await env.DB.prepare(
     `UPDATE projects
      SET name = ?, status = ?, footage_link = ?, reference_links = ?, instructions = ?, export_link = ?,
-         price = ?, paid = ?, updated_at = datetime('now')
+         price = ?, paid = ?, created_date = ?, completed_date = ?, updated_at = datetime('now')
      WHERE id = ?`
   )
-    .bind(name, status, footage_link, reference_links, instructions, export_link, price, paid, id)
+    .bind(
+      name,
+      status,
+      footage_link,
+      reference_links,
+      instructions,
+      export_link,
+      price,
+      paid,
+      created_date,
+      completed_date,
+      id
+    )
     .run();
 
   const updated = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(id).first();
@@ -253,6 +280,15 @@ async function deleteProject(env: Env, id: string): Promise<Response> {
 
   await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run();
   return new Response(null, { status: 204 });
+}
+
+async function getCalendar(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT p.id, p.name, p.status, p.created_date, p.completed_date, p.client_id, c.name as client_name
+     FROM projects p
+     JOIN clients c ON c.id = p.client_id`
+  ).all();
+  return json(results);
 }
 
 async function summarizeInstructions(request: Request, env: Env): Promise<Response> {
@@ -329,6 +365,7 @@ export default {
     }
 
     if (path === "/api/ai/summarize" && method === "POST") return summarizeInstructions(request, env);
+    if (path === "/api/calendar" && method === "GET") return getCalendar(env);
 
     if (path === "/api/clients" && method === "GET") return listClients(env);
     if (path === "/api/clients" && method === "POST") return createClient(request, env);
