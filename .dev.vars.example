@@ -1,0 +1,2 @@
+ADMIN_PASSPHRASE=change-me
+AUTH_SECRET=any-long-random-string-used-to-sign-the-session-cookie
