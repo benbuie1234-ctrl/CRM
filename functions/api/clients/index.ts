@@ -5,7 +5,7 @@ const VALID_BILLING_TYPES = ["per_project", "retainer"];
 export const onRequestGet = async ({ env }: { env: Env }) => {
   const { results } = await env.DB.prepare(
     `SELECT c.*, COUNT(p.id) as project_count,
-       COALESCE(SUM(CASE WHEN c.billing_type = 'per_project' AND p.paid = 0 THEN p.price ELSE 0 END), 0) as amount_owed
+       COALESCE(SUM(CASE WHEN p.paid = 0 THEN p.price ELSE 0 END), 0) as amount_owed
      FROM clients c
      LEFT JOIN projects p ON p.client_id = c.id
      GROUP BY c.id

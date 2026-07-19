@@ -73,19 +73,22 @@ export default function ClientDetail() {
           )}
           {client.notes && <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{client.notes}</p>}
 
-          <div className="mt-4">
-            {client.billing_type === "retainer" ? (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {client.billing_type === "retainer" && (
               <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-medium text-indigo-700">
                 {formatMoney(client.retainer_amount)} / month retainer
               </span>
-            ) : (
-              <span
-                className={`rounded-full px-3 py-1 text-sm font-medium ${
-                  amountOwed > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
-                }`}
-              >
-                {amountOwed > 0 ? `Owes ${formatMoney(amountOwed)}` : "Paid up"}
+            )}
+            {amountOwed > 0 ? (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-700">
+                Owes {formatMoney(amountOwed)} from per-video work
               </span>
+            ) : (
+              client.billing_type !== "retainer" && (
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-700">
+                  Paid up
+                </span>
+              )
             )}
           </div>
         </div>

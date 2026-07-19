@@ -78,15 +78,18 @@ export default function Dashboard() {
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
                   {c.project_count ?? 0} project{c.project_count === 1 ? "" : "s"}
                 </p>
-                {c.billing_type === "retainer" ? (
-                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                    {formatMoney(c.retainer_amount)}/mo
-                  </span>
-                ) : (c.amount_owed ?? 0) > 0 ? (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                    Owed {formatMoney(c.amount_owed)}
-                  </span>
-                ) : null}
+                <div className="flex items-center gap-1.5">
+                  {c.billing_type === "retainer" && (
+                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                      {formatMoney(c.retainer_amount)}/mo
+                    </span>
+                  )}
+                  {(c.amount_owed ?? 0) > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                      Owed {formatMoney(c.amount_owed)}
+                    </span>
+                  )}
+                </div>
               </div>
             </Link>
           ))}
