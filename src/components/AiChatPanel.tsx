@@ -91,6 +91,13 @@ export default function AiChatPanel() {
                   >
                     ✓ {actions[i]!.project!.name} — View Project
                   </Link>
+                ) : actions[i]!.ok && actions[i]!.client ? (
+                  <Link
+                    to={`/clients/${actions[i]!.client!.id}`}
+                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20"
+                  >
+                    ✓ {actions[i]!.client!.name} — View Client
+                  </Link>
                 ) : (
                   <span className="inline-block rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400">
                     ⚠ {actions[i]!.error}

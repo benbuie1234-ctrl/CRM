@@ -44,6 +44,7 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 export type ChatAction = {
   ok: boolean;
+  client?: Client;
   project?: Project;
   error?: string;
 };

@@ -81,37 +81,51 @@ async function listClients(env: Env): Promise<Response> {
   return json(results);
 }
 
-async function createClient(request: Request, env: Env): Promise<Response> {
-  const body = await request.json().catch(() => ({}));
-  const { name, email, drive_link, notes, billing_type, retainer_amount } = body as any;
+type ClientInput = {
+  name: string;
+  email?: string | null;
+  drive_link?: string | null;
+  notes?: string | null;
+  billing_type?: string | null;
+  retainer_amount?: number | null;
+};
 
-  if (!name || typeof name !== "string" || !name.trim()) {
-    return errorResponse("Client name is required");
-  }
-  const billingType = billing_type || "per_project";
-  if (!VALID_BILLING_TYPES.includes(billingType)) {
-    return errorResponse("Invalid billing type");
-  }
-
+async function insertClientRow(env: Env, input: ClientInput) {
   const id = newId();
   const slug = newSlug();
+  const billingType =
+    input.billing_type && VALID_BILLING_TYPES.includes(input.billing_type) ? input.billing_type : "per_project";
+
   await env.DB.prepare(
     `INSERT INTO clients (id, name, email, drive_link, notes, billing_type, retainer_amount, share_slug)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
-      name.trim(),
-      email || null,
-      drive_link || null,
-      notes || null,
+      input.name.trim(),
+      input.email || null,
+      input.drive_link || null,
+      input.notes || null,
       billingType,
-      billingType === "retainer" ? retainer_amount ?? null : null,
+      billingType === "retainer" ? input.retainer_amount ?? null : null,
       slug
     )
     .run();
 
-  const client = await env.DB.prepare(`SELECT * FROM clients WHERE id = ?`).bind(id).first();
+  return env.DB.prepare(`SELECT * FROM clients WHERE id = ?`).bind(id).first();
+}
+
+async function createClient(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => ({}))) as any;
+
+  if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
+    return errorResponse("Client name is required");
+  }
+  if (body.billing_type && !VALID_BILLING_TYPES.includes(body.billing_type)) {
+    return errorResponse("Invalid billing type");
+  }
+
+  const client = await insertClientRow(env, body);
   return json(client, 201);
 }
 
@@ -340,23 +354,49 @@ async function findProjectByName(
 }
 
 type ChatAction = {
-  type: "create_project" | "update_project";
+  type: "create_client" | "create_project" | "update_project";
   client_name?: string;
+  email?: string;
+  drive_link?: string;
+  billing_type?: string;
+  retainer_amount?: number;
   project_name?: string;
   price?: number;
   paid?: boolean;
   status?: string;
-  type_?: string;
   instructions?: string;
   footage_link?: string;
   export_link?: string;
   reference_links?: string;
 };
 
-async function runChatAction(env: Env, action: ChatAction): Promise<{ ok: true; project: any } | { ok: false; error: string }> {
+type ChatActionResult =
+  | { ok: true; client?: any; project?: any }
+  | { ok: false; error: string };
+
+async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionResult> {
   if (!action.client_name) return { ok: false, error: "No client name given" };
-  const client = await findClientByName(env, action.client_name);
+
+  if (action.type === "create_client") {
+    const existing = await findClientByName(env, action.client_name);
+    if (existing && existing !== "ambiguous") {
+      return { ok: false, error: `A client called "${existing.name}" already exists` };
+    }
+    const client = await insertClientRow(env, {
+      name: action.client_name,
+      email: action.email,
+      drive_link: action.drive_link,
+      billing_type: action.billing_type,
+      retainer_amount: action.retainer_amount,
+    });
+    return { ok: true, client };
+  }
+
+  let client = await findClientByName(env, action.client_name);
   if (client === "ambiguous") return { ok: false, error: `Multiple clients match "${action.client_name}" — be more specific` };
+  if (!client && action.type === "create_project") {
+    client = await insertClientRow(env, { name: action.client_name });
+  }
   if (!client) return { ok: false, error: `No client found matching "${action.client_name}"` };
 
   if (action.type === "create_project") {
@@ -371,7 +411,7 @@ async function runChatAction(env: Env, action: ChatAction): Promise<{ ok: true; 
       export_link: action.export_link,
       reference_links: action.reference_links,
     });
-    return { ok: true, project };
+    return { ok: true, project, client };
   }
 
   if (action.type === "update_project") {
@@ -413,22 +453,26 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
 
   const systemPrompt =
     "You are the built-in assistant for a freelance video editor's client-management app. You can chat normally, " +
-    "summarize messy client messages into clean editing briefs, and — when asked — actually create or update a " +
-    `project card in the database. Today's date is ${today}. ` +
-    (clientNames.length
-      ? `Existing clients: ${clientNames.join(", ")}. `
-      : "There are no clients in the system yet — tell the user to create one first if they ask you to make a project. ") +
-    "When the user gives you enough info to create a new project/video card, or to update an existing one (e.g. " +
-    "set its price, mark it paid, add instructions from a pasted client message, add a footage/export link), write " +
-    "a short natural-language confirmation, then end your reply with a fenced code block labeled action containing " +
-    "ONE JSON object, like:\n" +
+    "summarize messy client messages into clean editing briefs, and — most importantly — directly create or update " +
+    `clients and project cards in the database when asked. Today's date is ${today}. ` +
+    (clientNames.length ? `Existing clients: ${clientNames.join(", ")}. ` : "There are no clients in the system yet. ") +
+    "\n\nCRITICAL RULE: do exactly the one thing the user asked, using only the information they actually gave you. " +
+    "Never ask a clarifying question for information the user didn't mention and didn't imply is coming — price, " +
+    "instructions, footage links, email, etc. are all OPTIONAL and can be added later. Only ask a question if a " +
+    "TRULY REQUIRED field is missing: a name for the client/project being created, or which existing client/project " +
+    "an update applies to when it's genuinely ambiguous. If the user just says 'add a new client named X', immediately " +
+    "emit the action to create it — do not ask what project they want, do not ask for email or billing info. If they " +
+    "later say 'the project I'm working on is Y', that is a SEPARATE request — if X doesn't exist as a client yet, " +
+    "just create the project for client_name X anyway (the system will auto-create the client too), do not stall to " +
+    "ask permission.\n\n" +
+    "After acting, write ONE short natural-language confirmation sentence, then end your reply with a fenced code " +
+    "block labeled action containing exactly ONE JSON object. Examples:\n" +
+    '```action\n{"type":"create_client","client_name":"Damien May"}\n```\n' +
     '```action\n{"type":"create_project","client_name":"Acme Fitness","project_name":"Q3 Promo","price":500,"instructions":"..."}\n```\n' +
-    "or\n" +
     '```action\n{"type":"update_project","client_name":"Acme Fitness","project_name":"Q3 Promo","paid":true}\n```\n' +
-    "Only use a client_name from the Existing clients list above — never invent one. Only include fields you actually " +
-    "know; omit the rest. Valid status values: in_progress, review, delivered. If you don't have enough information " +
-    "(e.g. which client, or no name for a new project), ask a clarifying question in plain text instead — do not " +
-    "emit an action block. Never emit more than one action block per reply.";
+    "Only include fields the user actually gave you — omit the rest entirely, don't guess or invent values. Valid " +
+    "status values: in_progress, review, delivered. Never emit more than one action block per reply. If the request " +
+    "is just conversation (no create/update intent), reply normally with no action block.";
 
   const messages = [{ role: "system", content: systemPrompt }, ...history];
 
@@ -443,7 +487,7 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
   const raw = result.response ?? "";
   const actionMatch = raw.match(/```action\s*([\s\S]*?)```/);
   let reply = actionMatch ? raw.slice(0, actionMatch.index).trim() : raw.trim();
-  let actionResult: { ok: boolean; project?: any; error?: string } | undefined;
+  let actionResult: (ChatActionResult & { error?: string }) | undefined;
 
   if (actionMatch) {
     try {
