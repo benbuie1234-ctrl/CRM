@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS clients (
   notes TEXT,
   billing_type TEXT NOT NULL DEFAULT 'per_project',
   retainer_amount REAL,
+  share_slug TEXT UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -31,3 +32,4 @@ CREATE INDEX IF NOT EXISTS idx_projects_client_id ON projects(client_id);
 CREATE INDEX IF NOT EXISTS idx_projects_share_slug ON projects(share_slug);
 CREATE INDEX IF NOT EXISTS idx_projects_created_date ON projects(created_date);
 CREATE INDEX IF NOT EXISTS idx_projects_completed_date ON projects(completed_date);
+CREATE INDEX IF NOT EXISTS idx_clients_share_slug ON clients(share_slug);

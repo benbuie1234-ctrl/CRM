@@ -5,6 +5,7 @@ import ClientDetail from "./pages/ClientDetail";
 import ProjectDetail from "./pages/ProjectDetail";
 import CalendarView from "./pages/CalendarView";
 import SharePage from "./pages/SharePage";
+import ClientPortal from "./pages/ClientPortal";
 import Login from "./pages/Login";
 import Header from "./components/Header";
 import { api, UnauthorizedError } from "./lib/api";
@@ -38,6 +39,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/share/:slug" element={<SharePage />} />
+      <Route path="/portal/:slug" element={<ClientPortal />} />
       <Route
         path="/*"
         element={

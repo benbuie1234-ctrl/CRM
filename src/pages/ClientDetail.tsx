@@ -14,6 +14,7 @@ export default function ClientDetail() {
   const [showNew, setShowNew] = useState(false);
   const [showEditClient, setShowEditClient] = useState(false);
   const [projectName, setProjectName] = useState("");
+  const [copiedPortal, setCopiedPortal] = useState(false);
 
   function refresh() {
     if (!clientId) return;
@@ -41,6 +42,19 @@ export default function ClientDetail() {
     if (!confirm(`Delete ${client?.name} and all their projects? This can't be undone.`)) return;
     await api.deleteClient(clientId);
     navigate("/");
+  }
+
+  function copyPortalLink() {
+    if (!client) return;
+    const url = `${window.location.origin}/portal/${client.share_slug}`;
+    navigator.clipboard.writeText(url);
+    setCopiedPortal(true);
+    setTimeout(() => setCopiedPortal(false), 1500);
+  }
+
+  async function togglePaid(project: Project, paid: boolean) {
+    setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, paid: (paid ? 1 : 0) as 0 | 1 } : p)));
+    await api.updateProject(project.id, { paid: (paid ? 1 : 0) as 0 | 1 });
   }
 
   if (loading || !client) {
@@ -94,6 +108,12 @@ export default function ClientDetail() {
         </div>
         <div className="flex gap-2">
           <button
+            onClick={copyPortalLink}
+            className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
+          >
+            {copiedPortal ? "Copied!" : "Copy Client Portal Link"}
+          </button>
+          <button
             onClick={() => setShowEditClient(true)}
             className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
           >
@@ -125,28 +145,39 @@ export default function ClientDetail() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {projects.map((p) => (
-            <Link
+            <div
               key={p.id}
-              to={`/clients/${clientId}/projects/${p.id}`}
-              className="rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-sm transition hover:border-brand-500 hover:shadow-md"
+              className="rounded-xl border border-slate-800 bg-slate-900 shadow-sm transition hover:border-brand-500 hover:shadow-md"
             >
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="font-medium text-slate-100">{p.name}</h3>
-                <StatusBadge status={p.status} />
-              </div>
-              <div className="flex items-center justify-between">
+              <Link to={`/clients/${clientId}/projects/${p.id}`} className="block p-5 pb-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="font-medium text-slate-100">{p.name}</h3>
+                  <StatusBadge status={p.status} />
+                </div>
                 <p className="text-xs text-slate-400">
                   {p.export_link ? "Final export ready" : p.footage_link ? "Footage linked" : "Not started"}
                 </p>
-                {p.price != null && (
-                  <span
-                    className={`text-xs font-medium ${p.paid ? "text-emerald-400" : "text-amber-400"}`}
-                  >
-                    {formatMoney(p.price)} {p.paid ? "· Paid" : "· Unpaid"}
+              </Link>
+              <div className="flex items-center justify-between border-t border-slate-800 px-5 py-3">
+                <span className={`text-xs font-medium ${p.price != null ? "text-slate-300" : "text-slate-600"}`}>
+                  {p.price != null ? formatMoney(p.price) : "No price set"}
+                </span>
+                <label
+                  className="flex items-center gap-1.5 text-xs font-medium text-slate-300"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(p.paid)}
+                    onChange={(e) => togglePaid(p, e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                  />
+                  <span className={p.paid ? "text-emerald-400" : "text-amber-400"}>
+                    {p.paid ? "Paid" : "Unpaid"}
                   </span>
-                )}
+                </label>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}

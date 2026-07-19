@@ -36,10 +36,16 @@ export type Client = {
   notes: string | null;
   billing_type: BillingType;
   retainer_amount: number | null;
+  share_slug: string;
   created_at: string;
   project_count?: number;
   amount_owed?: number;
 };
+
+export type PortalProject = Pick<
+  Project,
+  "id" | "name" | "status" | "footage_link" | "instructions" | "export_link" | "share_slug" | "created_date" | "completed_date"
+>;
 
 class UnauthorizedError extends Error {}
 
@@ -83,6 +89,9 @@ export const api = {
 
   getShared: (slug: string) =>
     request<{ project: Project; client: { name: string } }>(`/share/${slug}`),
+
+  getClientPortal: (slug: string) =>
+    request<{ client: { id: string; name: string }; projects: PortalProject[] }>(`/portal/${slug}`),
 
   summarize: (text: string) =>
     request<{ summary: string }>("/ai/summarize", { method: "POST", body: JSON.stringify({ text }) }),

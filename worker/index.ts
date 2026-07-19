@@ -93,9 +93,10 @@ async function createClient(request: Request, env: Env): Promise<Response> {
   }
 
   const id = newId();
+  const slug = newSlug();
   await env.DB.prepare(
-    `INSERT INTO clients (id, name, email, drive_link, notes, billing_type, retainer_amount)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO clients (id, name, email, drive_link, notes, billing_type, retainer_amount, share_slug)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
@@ -104,7 +105,8 @@ async function createClient(request: Request, env: Env): Promise<Response> {
       drive_link || null,
       notes || null,
       billingType,
-      billingType === "retainer" ? retainer_amount ?? null : null
+      billingType === "retainer" ? retainer_amount ?? null : null,
+      slug
     )
     .run();
 
@@ -338,6 +340,22 @@ async function getShared(env: Env, slug: string): Promise<Response> {
   return json({ project, client });
 }
 
+async function getClientPortal(env: Env, slug: string): Promise<Response> {
+  const client = await env.DB.prepare(`SELECT id, name FROM clients WHERE share_slug = ?`)
+    .bind(slug)
+    .first();
+  if (!client) return errorResponse("Not found", 404);
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, name, status, footage_link, instructions, export_link, share_slug, created_date, completed_date
+     FROM projects WHERE client_id = ? ORDER BY created_at DESC`
+  )
+    .bind((client as any).id)
+    .all();
+
+  return json({ client, projects: results });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -358,6 +376,11 @@ export default {
     const shareMatch = path.match(/^\/api\/share\/([^/]+)$/);
     if (shareMatch && method === "GET") {
       return getShared(env, shareMatch[1]);
+    }
+
+    const portalMatch = path.match(/^\/api\/portal\/([^/]+)$/);
+    if (portalMatch && method === "GET") {
+      return getClientPortal(env, portalMatch[1]);
     }
 
     if (!(await isAuthed(request, env))) {

@@ -43,9 +43,9 @@ export default function ProjectDetail() {
   }, [projectId]);
 
   async function handleSave() {
-    if (!projectId) return;
+    if (!projectId || !clientId) return;
     setSaving(true);
-    const updated = await api.updateProject(projectId, {
+    await api.updateProject(projectId, {
       name,
       status,
       footage_link: footageLink || null,
@@ -57,10 +57,7 @@ export default function ProjectDetail() {
       created_date: createdDate,
       completed_date: completedDate || null,
     });
-    setProject(updated);
-    setCreatedDate(updated.created_date || "");
-    setCompletedDate(updated.completed_date || "");
-    setSaving(false);
+    navigate(`/clients/${clientId}`);
   }
 
   async function handleDelete() {
