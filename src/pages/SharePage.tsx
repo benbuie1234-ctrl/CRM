@@ -19,7 +19,7 @@ export default function SharePage() {
   if (error) {
     return (
       <div className="flex min-h-screen items-center justify-center px-4 text-center">
-        <p className="text-slate-500">This link isn't valid or the project was removed.</p>
+        <p className="text-slate-400">This link isn't valid or the project was removed.</p>
       </div>
     );
   }
@@ -31,19 +31,19 @@ export default function SharePage() {
   const { project, client } = data;
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-10">
+    <div className="min-h-screen bg-slate-950 px-6 py-10">
       <div className="mx-auto max-w-2xl">
-        <p className="mb-1 text-sm text-slate-500">{client.name}</p>
+        <p className="mb-1 text-sm text-slate-400">{client.name}</p>
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-slate-900">{project.name}</h1>
+          <h1 className="text-2xl font-semibold text-slate-100">{project.name}</h1>
           <StatusBadge status={project.status} />
         </div>
 
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-sm">
           {project.instructions && (
             <div>
               <h2 className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Instructions</h2>
-              <p className="whitespace-pre-wrap text-sm text-slate-700">{project.instructions}</p>
+              <p className="whitespace-pre-wrap text-sm text-slate-300">{project.instructions}</p>
             </div>
           )}
 
@@ -54,7 +54,7 @@ export default function SharePage() {
                 href={project.footage_link}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm font-medium text-brand-600 hover:text-brand-700"
+                className="text-sm font-medium text-brand-400 hover:text-brand-300"
               >
                 Open footage link ↗
               </a>
@@ -62,13 +62,13 @@ export default function SharePage() {
           )}
 
           {project.export_link ? (
-            <div className="rounded-lg bg-emerald-50 p-4">
-              <h2 className="mb-1 text-xs font-medium uppercase tracking-wide text-emerald-700">Final Export</h2>
+            <div className="rounded-lg bg-emerald-500/10 p-4">
+              <h2 className="mb-1 text-xs font-medium uppercase tracking-wide text-emerald-400">Final Export</h2>
               <a
                 href={project.export_link}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+                className="text-sm font-medium text-emerald-400 hover:text-emerald-300"
               >
                 Watch / Download Final Video ↗
               </a>

@@ -3,5 +3,12 @@
 @tailwind utilities;
 
 body {
-  @apply bg-slate-50 text-slate-900;
+  @apply bg-slate-950 text-slate-100;
+  color-scheme: dark;
+}
+
+input,
+textarea,
+select {
+  @apply bg-slate-950 text-slate-100 placeholder-slate-500;
 }

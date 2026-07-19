@@ -21,19 +21,19 @@ export default function Login({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-xl bg-white p-8 shadow-sm border border-slate-200">
-        <h1 className="mb-1 text-xl font-semibold text-slate-900">Editor CRM</h1>
-        <p className="mb-6 text-sm text-slate-500">Enter your passphrase to continue.</p>
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-xl bg-slate-900 p-8 shadow-sm border border-slate-800">
+        <h1 className="mb-1 text-xl font-semibold text-slate-100">Editor CRM</h1>
+        <p className="mb-6 text-sm text-slate-400">Enter your passphrase to continue.</p>
         <input
           type="password"
           autoFocus
           value={passphrase}
           onChange={(e) => setPassphrase(e.target.value)}
           placeholder="Passphrase"
-          className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+          className="mb-3 w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
         />
-        {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+        {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
         <button
           type="submit"
           disabled={loading}

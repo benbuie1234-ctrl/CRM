@@ -53,39 +53,39 @@ export default function ClientDetail() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-10">
-      <Link to="/" className="mb-6 inline-block text-sm text-slate-500 hover:text-slate-700">
+      <Link to="/" className="mb-6 inline-block text-sm text-slate-400 hover:text-slate-200">
         ← All clients
       </Link>
 
-      <div className="mb-8 flex items-start justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-8 flex items-start justify-between rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-sm">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">{client.name}</h1>
-          {client.email && <p className="mt-1 text-sm text-slate-500">{client.email}</p>}
+          <h1 className="text-2xl font-semibold text-slate-100">{client.name}</h1>
+          {client.email && <p className="mt-1 text-sm text-slate-400">{client.email}</p>}
           {client.drive_link && (
             <a
               href={client.drive_link}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700"
+              className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-brand-400 hover:text-brand-300"
             >
               Open Drive Folder ↗
             </a>
           )}
-          {client.notes && <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{client.notes}</p>}
+          {client.notes && <p className="mt-3 whitespace-pre-wrap text-sm text-slate-300">{client.notes}</p>}
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {client.billing_type === "retainer" && (
-              <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-medium text-indigo-700">
+              <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-sm font-medium text-indigo-400">
                 {formatMoney(client.retainer_amount)} / month retainer
               </span>
             )}
             {amountOwed > 0 ? (
-              <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-700">
+              <span className="rounded-full bg-amber-500/10 px-3 py-1 text-sm font-medium text-amber-400">
                 Owes {formatMoney(amountOwed)} from per-video work
               </span>
             ) : (
               client.billing_type !== "retainer" && (
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-700">
+                <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-medium text-emerald-400">
                   Paid up
                 </span>
               )
@@ -95,13 +95,13 @@ export default function ClientDetail() {
         <div className="flex gap-2">
           <button
             onClick={() => setShowEditClient(true)}
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+            className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
           >
             Edit
           </button>
           <button
             onClick={handleDeleteClient}
-            className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+            className="rounded-lg border border-red-900 px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/10"
           >
             Delete
           </button>
@@ -109,7 +109,7 @@ export default function ClientDetail() {
       </div>
 
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Projects</h2>
+        <h2 className="text-lg font-semibold text-slate-100">Projects</h2>
         <button
           onClick={() => setShowNew(true)}
           className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
@@ -119,7 +119,7 @@ export default function ClientDetail() {
       </div>
 
       {projects.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 p-12 text-center text-slate-400">
+        <div className="rounded-xl border border-dashed border-slate-700 p-12 text-center text-slate-400">
           No projects yet for this client.
         </div>
       ) : (
@@ -128,10 +128,10 @@ export default function ClientDetail() {
             <Link
               key={p.id}
               to={`/clients/${clientId}/projects/${p.id}`}
-              className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-brand-300 hover:shadow-md"
+              className="rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-sm transition hover:border-brand-500 hover:shadow-md"
             >
               <div className="mb-2 flex items-center justify-between">
-                <h3 className="font-medium text-slate-900">{p.name}</h3>
+                <h3 className="font-medium text-slate-100">{p.name}</h3>
                 <StatusBadge status={p.status} />
               </div>
               <div className="flex items-center justify-between">
@@ -140,7 +140,7 @@ export default function ClientDetail() {
                 </p>
                 {p.price != null && (
                   <span
-                    className={`text-xs font-medium ${p.paid ? "text-emerald-600" : "text-amber-600"}`}
+                    className={`text-xs font-medium ${p.paid ? "text-emerald-400" : "text-amber-400"}`}
                   >
                     {formatMoney(p.price)} {p.paid ? "· Paid" : "· Unpaid"}
                   </span>
@@ -155,12 +155,12 @@ export default function ClientDetail() {
         <Modal title="New Project" onClose={() => setShowNew(false)}>
           <form onSubmit={handleCreateProject} className="space-y-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Project Name</label>
+              <label className="mb-1 block text-xs font-medium text-slate-400">Project Name</label>
               <input
                 autoFocus
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
                 placeholder="e.g. Q3 Brand Video"
               />
             </div>
@@ -223,44 +223,44 @@ function EditClientModal({
     <Modal title="Edit Client" onClose={onClose}>
       <form onSubmit={handleSave} className="space-y-3">
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Name</label>
+          <label className="mb-1 block text-xs font-medium text-slate-400">Name</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Email</label>
+          <label className="mb-1 block text-xs font-medium text-slate-400">Email</label>
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Drive Link</label>
+          <label className="mb-1 block text-xs font-medium text-slate-400">Drive Link</label>
           <input
             value={driveLink}
             onChange={(e) => setDriveLink(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Notes</label>
+          <label className="mb-1 block text-xs font-medium text-slate-400">Notes</label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Billing</label>
+          <label className="mb-1 block text-xs font-medium text-slate-400">Billing</label>
           <select
             value={billingType}
             onChange={(e) => setBillingType(e.target.value as BillingType)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
           >
             <option value="per_project">Per Video / Project</option>
             <option value="retainer">Monthly Retainer</option>
@@ -268,14 +268,14 @@ function EditClientModal({
         </div>
         {billingType === "retainer" && (
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Retainer Amount / Month</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Retainer Amount / Month</label>
             <input
               type="number"
               min="0"
               step="0.01"
               value={retainerAmount}
               onChange={(e) => setRetainerAmount(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
               placeholder="2000"
             />
           </div>

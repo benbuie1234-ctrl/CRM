@@ -76,27 +76,27 @@ export default function ProjectDetail() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
-      <Link to={`/clients/${clientId}`} className="mb-6 inline-block text-sm text-slate-500 hover:text-slate-700">
+      <Link to={`/clients/${clientId}`} className="mb-6 inline-block text-sm text-slate-400 hover:text-slate-200">
         ← Back to client
       </Link>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-sm">
         <div className="mb-6 flex items-center justify-between">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full border-none bg-transparent text-2xl font-semibold text-slate-900 outline-none"
+            className="w-full border-none bg-transparent text-2xl font-semibold text-slate-100 outline-none"
           />
           <StatusBadge status={status} />
         </div>
 
         <div className="space-y-5">
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Status</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Status</label>
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as Project["status"])}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>
@@ -107,17 +107,17 @@ export default function ProjectDetail() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Footage Link</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Footage Link</label>
             <input
               value={footageLink}
               onChange={(e) => setFootageLink(e.target.value)}
               placeholder="https://drive.google.com/... or WeTransfer link"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">
+            <label className="mb-1 block text-xs font-medium text-slate-400">
               Reference Video Link(s)
             </label>
             <textarea
@@ -125,35 +125,35 @@ export default function ProjectDetail() {
               onChange={(e) => setReferenceLinks(e.target.value)}
               rows={3}
               placeholder={"Example videos the client sent, one link per line"}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Instructions</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Instructions</label>
             <textarea
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               rows={6}
               placeholder="Editing notes, brand guidelines, pacing, music preferences, deadlines..."
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Final Export Link</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Final Export Link</label>
             <input
               value={exportLink}
               onChange={(e) => setExportLink(e.target.value)}
               placeholder="https://drive.google.com/... final video"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4 rounded-lg bg-slate-50 p-4">
+          <div className="grid grid-cols-2 gap-4 rounded-lg bg-slate-950 p-4">
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Price</label>
-              <div className="flex items-center rounded-lg border border-slate-300 bg-white pl-3 focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500">
+              <label className="mb-1 block text-xs font-medium text-slate-400">Price</label>
+              <div className="flex items-center rounded-lg border border-slate-700 bg-slate-900 pl-3 focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500">
                 <span className="text-sm text-slate-400">$</span>
                 <input
                   type="number"
@@ -167,12 +167,12 @@ export default function ProjectDetail() {
               </div>
             </div>
             <div className="flex items-end">
-              <label className="flex items-center gap-2 pb-2 text-sm text-slate-700">
+              <label className="flex items-center gap-2 pb-2 text-sm text-slate-300">
                 <input
                   type="checkbox"
                   checked={paid}
                   onChange={(e) => setPaid(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                  className="h-4 w-4 rounded border-slate-700 text-brand-600 focus:ring-brand-500"
                 />
                 Paid
               </label>
@@ -180,7 +180,7 @@ export default function ProjectDetail() {
           </div>
         </div>
 
-        <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-5">
+        <div className="mt-6 flex items-center justify-between border-t border-slate-800 pt-5">
           <div className="flex gap-2">
             <button
               onClick={handleSave}
@@ -191,12 +191,12 @@ export default function ProjectDetail() {
             </button>
             <button
               onClick={copyShareLink}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
             >
               {copied ? "Copied!" : "Copy Client Share Link"}
             </button>
           </div>
-          <button onClick={handleDelete} className="text-sm text-red-600 hover:text-red-700">
+          <button onClick={handleDelete} className="text-sm text-red-400 hover:text-red-300">
             Delete Project
           </button>
         </div>
