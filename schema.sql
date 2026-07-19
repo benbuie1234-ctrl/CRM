@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS projects (
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'in_progress',
+  type TEXT NOT NULL DEFAULT 'project',
   footage_link TEXT,
   reference_links TEXT,
   instructions TEXT,

@@ -1,8 +1,11 @@
+export type ProjectType = "project" | "reel";
+
 export type Project = {
   id: string;
   client_id: string;
   name: string;
   status: "in_progress" | "review" | "delivered";
+  type: ProjectType;
   footage_link: string | null;
   reference_links: string | null;
   instructions: string | null;
@@ -14,16 +17,6 @@ export type Project = {
   share_slug: string;
   created_at: string;
   updated_at: string;
-};
-
-export type CalendarEvent = {
-  id: string;
-  name: string;
-  status: Project["status"];
-  created_date: string;
-  completed_date: string | null;
-  client_id: string;
-  client_name: string;
 };
 
 export type BillingType = "per_project" | "retainer";
@@ -46,6 +39,14 @@ export type PortalProject = Pick<
   Project,
   "id" | "name" | "status" | "footage_link" | "instructions" | "export_link" | "share_slug" | "created_date" | "completed_date"
 >;
+
+export type ChatMessage = { role: "user" | "assistant"; content: string };
+
+export type ChatAction = {
+  ok: boolean;
+  project?: Project;
+  error?: string;
+};
 
 class UnauthorizedError extends Error {}
 
@@ -93,8 +94,9 @@ export const api = {
   getClientPortal: (slug: string) =>
     request<{ client: { id: string; name: string }; projects: PortalProject[] }>(`/portal/${slug}`),
 
-  summarize: (text: string) =>
-    request<{ summary: string }>("/ai/summarize", { method: "POST", body: JSON.stringify({ text }) }),
-
-  getCalendar: () => request<CalendarEvent[]>("/calendar"),
+  chat: (messages: ChatMessage[]) =>
+    request<{ reply: string; action?: ChatAction }>("/ai/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+    }),
 };

@@ -9,6 +9,7 @@ export interface Env {
 const AUTH_COOKIE = "crm_auth";
 const VALID_STATUSES = ["in_progress", "review", "delivered"];
 const VALID_BILLING_TYPES = ["per_project", "retainer"];
+const VALID_PROJECT_TYPES = ["project", "reel"];
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -176,45 +177,63 @@ async function listProjects(env: Env, clientId: string): Promise<Response> {
   return json(results);
 }
 
-async function createProject(request: Request, env: Env, clientId: string): Promise<Response> {
-  const client = await env.DB.prepare(`SELECT id FROM clients WHERE id = ?`).bind(clientId).first();
-  if (!client) return errorResponse("Client not found", 404);
+type ProjectInput = {
+  name: string;
+  status?: string;
+  type?: string;
+  footage_link?: string | null;
+  reference_links?: string | null;
+  instructions?: string | null;
+  export_link?: string | null;
+  price?: number | null;
+  paid?: boolean | 0 | 1;
+  created_date?: string | null;
+  completed_date?: string | null;
+};
 
-  const body = (await request.json().catch(() => ({}))) as any;
-  const { name, status, footage_link, reference_links, instructions, export_link, price, paid, created_date } =
-    body;
-
-  if (!name || !String(name).trim()) return errorResponse("Project name is required");
-
+async function insertProjectRow(env: Env, clientId: string, input: ProjectInput) {
   const id = newId();
   const slug = newSlug();
   const today = new Date().toISOString().slice(0, 10);
-  const completedDate = status === "delivered" ? today : null;
+  const status = input.status && VALID_STATUSES.includes(input.status) ? input.status : "in_progress";
+  const type = input.type && VALID_PROJECT_TYPES.includes(input.type) ? input.type : "project";
+  const completedDate = input.completed_date || (status === "delivered" ? today : null);
 
   await env.DB.prepare(
     `INSERT INTO projects
-       (id, client_id, name, status, footage_link, reference_links, instructions, export_link, price, paid,
+       (id, client_id, name, status, type, footage_link, reference_links, instructions, export_link, price, paid,
         created_date, completed_date, share_slug)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
       clientId,
-      name.trim(),
-      status || "in_progress",
-      footage_link || null,
-      reference_links || null,
-      instructions || null,
-      export_link || null,
-      price ?? null,
-      paid ? 1 : 0,
-      created_date || today,
+      input.name.trim(),
+      status,
+      type,
+      input.footage_link || null,
+      input.reference_links || null,
+      input.instructions || null,
+      input.export_link || null,
+      input.price ?? null,
+      input.paid ? 1 : 0,
+      input.created_date || today,
       completedDate,
       slug
     )
     .run();
 
-  const project = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(id).first();
+  return env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(id).first();
+}
+
+async function createProject(request: Request, env: Env, clientId: string): Promise<Response> {
+  const client = await env.DB.prepare(`SELECT id FROM clients WHERE id = ?`).bind(clientId).first();
+  if (!client) return errorResponse("Client not found", 404);
+
+  const body = (await request.json().catch(() => ({}))) as any;
+  if (!body.name || !String(body.name).trim()) return errorResponse("Project name is required");
+
+  const project = await insertProjectRow(env, clientId, body);
   return json(project, 201);
 }
 
@@ -232,6 +251,7 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   const ex = existing as any;
   const name = body.name ?? ex.name;
   const status = body.status ?? ex.status;
+  const type = body.type && VALID_PROJECT_TYPES.includes(body.type) ? body.type : ex.type;
   const footage_link = body.footage_link !== undefined ? body.footage_link : ex.footage_link;
   const reference_links = body.reference_links !== undefined ? body.reference_links : ex.reference_links;
   const instructions = body.instructions !== undefined ? body.instructions : ex.instructions;
@@ -253,13 +273,14 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
 
   await env.DB.prepare(
     `UPDATE projects
-     SET name = ?, status = ?, footage_link = ?, reference_links = ?, instructions = ?, export_link = ?,
+     SET name = ?, status = ?, type = ?, footage_link = ?, reference_links = ?, instructions = ?, export_link = ?,
          price = ?, paid = ?, created_date = ?, completed_date = ?, updated_at = datetime('now')
      WHERE id = ?`
   )
     .bind(
       name,
       status,
+      type,
       footage_link,
       reference_links,
       instructions,
@@ -284,49 +305,158 @@ async function deleteProject(env: Env, id: string): Promise<Response> {
   return new Response(null, { status: 204 });
 }
 
-async function getCalendar(env: Env): Promise<Response> {
-  const { results } = await env.DB.prepare(
-    `SELECT p.id, p.name, p.status, p.created_date, p.completed_date, p.client_id, c.name as client_name
-     FROM projects p
-     JOIN clients c ON c.id = p.client_id`
-  ).all();
-  return json(results);
+async function findClientByName(env: Env, name: string): Promise<{ id: string; name: string } | null | "ambiguous"> {
+  const exact = await env.DB.prepare(`SELECT id, name FROM clients WHERE lower(name) = lower(?)`)
+    .bind(name)
+    .first();
+  if (exact) return exact as any;
+
+  const { results } = await env.DB.prepare(`SELECT id, name FROM clients WHERE lower(name) LIKE '%' || lower(?) || '%'`)
+    .bind(name)
+    .all();
+  if (results.length === 1) return results[0] as any;
+  if (results.length > 1) return "ambiguous";
+  return null;
 }
 
-async function summarizeInstructions(request: Request, env: Env): Promise<Response> {
+async function findProjectByName(
+  env: Env,
+  clientId: string,
+  name: string
+): Promise<{ id: string } | null | "ambiguous"> {
+  const exact = await env.DB.prepare(`SELECT id FROM projects WHERE client_id = ? AND lower(name) = lower(?)`)
+    .bind(clientId, name)
+    .first();
+  if (exact) return exact as any;
+
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM projects WHERE client_id = ? AND lower(name) LIKE '%' || lower(?) || '%'`
+  )
+    .bind(clientId, name)
+    .all();
+  if (results.length === 1) return results[0] as any;
+  if (results.length > 1) return "ambiguous";
+  return null;
+}
+
+type ChatAction = {
+  type: "create_project" | "update_project";
+  client_name?: string;
+  project_name?: string;
+  price?: number;
+  paid?: boolean;
+  status?: string;
+  type_?: string;
+  instructions?: string;
+  footage_link?: string;
+  export_link?: string;
+  reference_links?: string;
+};
+
+async function runChatAction(env: Env, action: ChatAction): Promise<{ ok: true; project: any } | { ok: false; error: string }> {
+  if (!action.client_name) return { ok: false, error: "No client name given" };
+  const client = await findClientByName(env, action.client_name);
+  if (client === "ambiguous") return { ok: false, error: `Multiple clients match "${action.client_name}" — be more specific` };
+  if (!client) return { ok: false, error: `No client found matching "${action.client_name}"` };
+
+  if (action.type === "create_project") {
+    if (!action.project_name) return { ok: false, error: "No project name given" };
+    const project = await insertProjectRow(env, client.id, {
+      name: action.project_name,
+      status: action.status,
+      price: action.price,
+      paid: action.paid,
+      instructions: action.instructions,
+      footage_link: action.footage_link,
+      export_link: action.export_link,
+      reference_links: action.reference_links,
+    });
+    return { ok: true, project };
+  }
+
+  if (action.type === "update_project") {
+    if (!action.project_name) return { ok: false, error: "No project name given" };
+    const match = await findProjectByName(env, client.id, action.project_name);
+    if (match === "ambiguous") return { ok: false, error: `Multiple projects match "${action.project_name}"` };
+    if (!match) return { ok: false, error: `No project found matching "${action.project_name}" for ${client.name}` };
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (action.price !== undefined) { fields.push("price = ?"); values.push(action.price); }
+    if (action.paid !== undefined) { fields.push("paid = ?"); values.push(action.paid ? 1 : 0); }
+    if (action.status !== undefined && VALID_STATUSES.includes(action.status)) { fields.push("status = ?"); values.push(action.status); }
+    if (action.instructions !== undefined) { fields.push("instructions = ?"); values.push(action.instructions); }
+    if (action.footage_link !== undefined) { fields.push("footage_link = ?"); values.push(action.footage_link); }
+    if (action.export_link !== undefined) { fields.push("export_link = ?"); values.push(action.export_link); }
+    if (action.reference_links !== undefined) { fields.push("reference_links = ?"); values.push(action.reference_links); }
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      values.push(match.id);
+      await env.DB.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ?`).bind(...values).run();
+    }
+    const project = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(match.id).first();
+    return { ok: true, project };
+  }
+
+  return { ok: false, error: "Unknown action type" };
+}
+
+async function aiChat(request: Request, env: Env): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as any;
-  const text = body.text;
-  if (!text || typeof text !== "string" || !text.trim()) {
-    return errorResponse("Paste the client's message first");
-  }
-  if (text.length > 20000) {
-    return errorResponse("Message is too long (20k character max)");
-  }
+  const history = Array.isArray(body.messages) ? body.messages : [];
+  if (history.length === 0) return errorResponse("No messages");
+
+  const { results: clientRows } = await env.DB.prepare(`SELECT name FROM clients ORDER BY name`).all();
+  const clientNames = (clientRows as any[]).map((c) => c.name);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const systemPrompt =
+    "You are the built-in assistant for a freelance video editor's client-management app. You can chat normally, " +
+    "summarize messy client messages into clean editing briefs, and — when asked — actually create or update a " +
+    `project card in the database. Today's date is ${today}. ` +
+    (clientNames.length
+      ? `Existing clients: ${clientNames.join(", ")}. `
+      : "There are no clients in the system yet — tell the user to create one first if they ask you to make a project. ") +
+    "When the user gives you enough info to create a new project/video card, or to update an existing one (e.g. " +
+    "set its price, mark it paid, add instructions from a pasted client message, add a footage/export link), write " +
+    "a short natural-language confirmation, then end your reply with a fenced code block labeled action containing " +
+    "ONE JSON object, like:\n" +
+    '```action\n{"type":"create_project","client_name":"Acme Fitness","project_name":"Q3 Promo","price":500,"instructions":"..."}\n```\n' +
+    "or\n" +
+    '```action\n{"type":"update_project","client_name":"Acme Fitness","project_name":"Q3 Promo","paid":true}\n```\n' +
+    "Only use a client_name from the Existing clients list above — never invent one. Only include fields you actually " +
+    "know; omit the rest. Valid status values: in_progress, review, delivered. If you don't have enough information " +
+    "(e.g. which client, or no name for a new project), ask a clarifying question in plain text instead — do not " +
+    "emit an action block. Never emit more than one action block per reply.";
+
+  const messages = [{ role: "system", content: systemPrompt }, ...history];
 
   let result;
   try {
-    result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-      messages: [
-      {
-        role: "system",
-        content:
-          "You are an assistant for a freelance video editor. The user will paste a raw message from a client " +
-          "describing what they want for a video edit. Summarize it into a clean, actionable brief the editor can " +
-          "work from. Use short bullet points grouped under these headings when relevant: Deliverable (format, " +
-          "length, aspect ratio, platform), Style & Tone, Music/Audio, Specific Edit Notes, Deadline, Open Questions " +
-          "(anything unclear or missing the editor should ask the client about). Keep only information actually in " +
-          "the message — never invent details. Be concise.",
-      },
-      { role: "user", content: text },
-      ],
-      max_tokens: 800,
-    });
+    result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { messages, max_tokens: 1000 });
   } catch (e) {
     const message = e instanceof Error ? e.message : "AI request failed";
     return errorResponse(`AI error: ${message}`, 502);
   }
 
-  return json({ summary: result.response ?? "" });
+  const raw = result.response ?? "";
+  const actionMatch = raw.match(/```action\s*([\s\S]*?)```/);
+  let reply = actionMatch ? raw.slice(0, actionMatch.index).trim() : raw.trim();
+  let actionResult: { ok: boolean; project?: any; error?: string } | undefined;
+
+  if (actionMatch) {
+    try {
+      const action = JSON.parse(actionMatch[1].trim()) as ChatAction;
+      actionResult = await runChatAction(env, action);
+    } catch {
+      actionResult = { ok: false, error: "Couldn't understand the action the AI produced — try rephrasing." };
+    }
+  }
+
+  if (!reply) reply = actionResult?.ok ? "Done." : actionResult?.error || "...";
+
+  return json({ reply, action: actionResult });
 }
 
 async function getShared(env: Env, slug: string): Promise<Response> {
@@ -387,8 +517,7 @@ export default {
       return errorResponse("Unauthorized", 401);
     }
 
-    if (path === "/api/ai/summarize" && method === "POST") return summarizeInstructions(request, env);
-    if (path === "/api/calendar" && method === "GET") return getCalendar(env);
+    if (path === "/api/ai/chat" && method === "POST") return aiChat(request, env);
 
     if (path === "/api/clients" && method === "GET") return listClients(env);
     if (path === "/api/clients" && method === "POST") return createClient(request, env);

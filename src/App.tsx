@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import Dashboard from "./pages/Dashboard";
 import ClientDetail from "./pages/ClientDetail";
 import ProjectDetail from "./pages/ProjectDetail";
-import CalendarView from "./pages/CalendarView";
 import SharePage from "./pages/SharePage";
 import ClientPortal from "./pages/ClientPortal";
 import Login from "./pages/Login";
 import Header from "./components/Header";
+import AiChatPanel from "./components/AiChatPanel";
 import { api, UnauthorizedError } from "./lib/api";
 
 function useAuth() {
@@ -44,14 +44,18 @@ export default function App() {
         path="/*"
         element={
           <RequireAuth>
-            <Header />
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/calendar" element={<CalendarView />} />
-              <Route path="/clients/:clientId" element={<ClientDetail />} />
-              <Route path="/clients/:clientId/projects/:projectId" element={<ProjectDetail />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+            <div className="flex">
+              <div className="min-w-0 flex-1">
+                <Header />
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/clients/:clientId" element={<ClientDetail />} />
+                  <Route path="/clients/:clientId/projects/:projectId" element={<ProjectDetail />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </div>
+              <AiChatPanel />
+            </div>
           </RequireAuth>
         }
       />
