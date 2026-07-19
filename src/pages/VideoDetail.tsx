@@ -1,20 +1,24 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, Project } from "../lib/api";
+import { api, Folder, Video } from "../lib/api";
 import StatusBadge from "../components/StatusBadge";
+import FolderPicker from "../components/FolderPicker";
 
-const STATUSES: Project["status"][] = ["in_progress", "review", "delivered"];
+const STATUSES: Video["status"][] = ["in_progress", "review", "delivered"];
 
-export default function ProjectDetail() {
-  const { clientId, projectId } = useParams<{ clientId: string; projectId: string }>();
+export default function VideoDetail() {
+  const { clientId, videoId } = useParams<{ clientId: string; videoId: string }>();
   const navigate = useNavigate();
-  const [project, setProject] = useState<Project | null>(null);
+  const [video, setVideo] = useState<Video | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showMove, setShowMove] = useState(false);
 
   const [name, setName] = useState("");
-  const [status, setStatus] = useState<Project["status"]>("in_progress");
+  const [status, setStatus] = useState<Video["status"]>("in_progress");
+  const [folderId, setFolderId] = useState<string | null>(null);
   const [footageLink, setFootageLink] = useState("");
   const [referenceLinks, setReferenceLinks] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -25,29 +29,32 @@ export default function ProjectDetail() {
   const [completedDate, setCompletedDate] = useState("");
 
   useEffect(() => {
-    if (!projectId) return;
-    api.getProject(projectId).then((p) => {
-      setProject(p);
-      setName(p.name);
-      setStatus(p.status);
-      setFootageLink(p.footage_link || "");
-      setReferenceLinks(p.reference_links || "");
-      setInstructions(p.instructions || "");
-      setExportLink(p.export_link || "");
-      setPrice(p.price != null ? String(p.price) : "");
-      setPaid(Boolean(p.paid));
-      setCreatedDate(p.created_date || "");
-      setCompletedDate(p.completed_date || "");
+    if (!videoId || !clientId) return;
+    Promise.all([api.getVideo(videoId), api.listFolders(clientId)]).then(([v, f]) => {
+      setVideo(v);
+      setFolders(f);
+      setName(v.name);
+      setStatus(v.status);
+      setFolderId(v.folder_id);
+      setFootageLink(v.footage_link || "");
+      setReferenceLinks(v.reference_links || "");
+      setInstructions(v.instructions || "");
+      setExportLink(v.export_link || "");
+      setPrice(v.price != null ? String(v.price) : "");
+      setPaid(Boolean(v.paid));
+      setCreatedDate(v.created_date || "");
+      setCompletedDate(v.completed_date || "");
       setLoading(false);
     });
-  }, [projectId]);
+  }, [videoId, clientId]);
 
   async function handleSave() {
-    if (!projectId || !clientId) return;
+    if (!videoId || !clientId) return;
     setSaving(true);
-    await api.updateProject(projectId, {
+    await api.updateVideo(videoId, {
       name,
       status,
+      folder_id: folderId,
       footage_link: footageLink || null,
       reference_links: referenceLinks || null,
       instructions: instructions || null,
@@ -61,23 +68,25 @@ export default function ProjectDetail() {
   }
 
   async function handleDelete() {
-    if (!projectId || !clientId) return;
-    if (!confirm(`Delete "${project?.name}"? This can't be undone.`)) return;
-    await api.deleteProject(projectId);
+    if (!videoId || !clientId) return;
+    if (!confirm(`Delete "${video?.name}"? This can't be undone.`)) return;
+    await api.deleteVideo(videoId);
     navigate(`/clients/${clientId}`);
   }
 
   function copyShareLink() {
-    if (!project) return;
-    const url = `${window.location.origin}/share/${project.share_slug}`;
+    if (!video) return;
+    const url = `${window.location.origin}/share/${video.share_slug}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
 
-  if (loading || !project) {
+  if (loading || !video) {
     return <div className="p-10 text-center text-slate-400">Loading...</div>;
   }
+
+  const folderName = folderId ? folders.find((f) => f.id === folderId)?.name : null;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
@@ -86,7 +95,7 @@ export default function ProjectDetail() {
       </Link>
 
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-sm">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -95,12 +104,19 @@ export default function ProjectDetail() {
           <StatusBadge status={status} />
         </div>
 
+        <button
+          onClick={() => setShowMove(true)}
+          className="mb-6 flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
+        >
+          📁 {folderName || "Root"} — Move
+        </button>
+
         <div className="space-y-5">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Status</label>
             <select
               value={status}
-              onChange={(e) => setStatus(e.target.value as Project["status"])}
+              onChange={(e) => setStatus(e.target.value as Video["status"])}
               className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             >
               {STATUSES.map((s) => (
@@ -134,7 +150,7 @@ export default function ProjectDetail() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-400">Footage Link</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Raw Footage / Download Link</label>
             <input
               value={footageLink}
               onChange={(e) => setFootageLink(e.target.value)}
@@ -224,10 +240,22 @@ export default function ProjectDetail() {
             </button>
           </div>
           <button onClick={handleDelete} className="text-sm text-red-400 hover:text-red-300">
-            Delete Project
+            Delete Video
           </button>
         </div>
       </div>
+
+      {showMove && (
+        <FolderPicker
+          title="Move to..."
+          folders={folders}
+          onClose={() => setShowMove(false)}
+          onSelect={(id) => {
+            setFolderId(id);
+            setShowMove(false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, BillingType, Client } from "../lib/api";
+import { api, BillingType, Client, DATA_CHANGED_EVENT } from "../lib/api";
 import Modal from "../components/Modal";
 import { formatMoney } from "../lib/format";
 
@@ -23,6 +23,11 @@ export default function Dashboard() {
   }
 
   useEffect(refresh, []);
+
+  useEffect(() => {
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -76,7 +81,7 @@ export default function Dashboard() {
               {c.email && <p className="mt-0.5 text-sm text-slate-400">{c.email}</p>}
               <div className="mt-3 flex items-center justify-between">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                  {c.project_count ?? 0} project{c.project_count === 1 ? "" : "s"}
+                  {c.project_count ?? 0} video{c.project_count === 1 ? "" : "s"}
                 </p>
                 <div className="flex items-center gap-1.5">
                   {c.billing_type === "retainer" && (

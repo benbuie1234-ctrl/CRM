@@ -1,47 +1,55 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, BillingType, Client, Project } from "../lib/api";
+import { api, BillingType, Client, DATA_CHANGED_EVENT, Folder, Video } from "../lib/api";
 import Modal from "../components/Modal";
+import FolderPicker from "../components/FolderPicker";
 import StatusBadge from "../components/StatusBadge";
-import ClientCalendar from "../components/ClientCalendar";
 import { formatMoney } from "../lib/format";
 
 export default function ClientDetail() {
   const { clientId } = useParams<{ clientId: string }>();
   const navigate = useNavigate();
   const [client, setClient] = useState<Client | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showNew, setShowNew] = useState(false);
-  const [showLogReel, setShowLogReel] = useState(false);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [showNewVideo, setShowNewVideo] = useState(false);
   const [showEditClient, setShowEditClient] = useState(false);
-  const [projectName, setProjectName] = useState("");
+  const [renamingFolder, setRenamingFolder] = useState<Folder | null>(null);
+  const [movingFolder, setMovingFolder] = useState<Folder | null>(null);
+  const [movingVideo, setMovingVideo] = useState<Video | null>(null);
   const [copiedPortal, setCopiedPortal] = useState(false);
 
   function refresh() {
     if (!clientId) return;
+    Promise.all([api.getClient(clientId), api.listFolders(clientId), api.listVideos(clientId)]).then(
+      ([c, f, v]) => {
+        setClient(c);
+        setFolders(f);
+        setVideos(v);
+        setLoading(false);
+      }
+    );
+  }
+
+  useEffect(() => {
     setLoading(true);
-    Promise.all([api.getClient(clientId), api.listProjects(clientId)]).then(([c, p]) => {
-      setClient(c);
-      setProjects(p);
-      setLoading(false);
-    });
-  }
-
-  useEffect(refresh, [clientId]);
-
-  async function handleCreateProject(e: React.FormEvent) {
-    e.preventDefault();
-    if (!clientId || !projectName.trim()) return;
-    await api.createProject(clientId, { name: projectName, status: "in_progress", type: "project" });
-    setShowNew(false);
-    setProjectName("");
+    setCurrentFolderId(null);
     refresh();
-  }
+  }, [clientId]);
+
+  useEffect(() => {
+    const handler = () => refresh();
+    window.addEventListener(DATA_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, handler);
+  }, [clientId]);
 
   async function handleDeleteClient() {
     if (!clientId) return;
-    if (!confirm(`Delete ${client?.name} and all their projects? This can't be undone.`)) return;
+    if (!confirm(`Delete ${client?.name} and everything inside? This can't be undone.`)) return;
     await api.deleteClient(clientId);
     navigate("/");
   }
@@ -54,21 +62,36 @@ export default function ClientDetail() {
     setTimeout(() => setCopiedPortal(false), 1500);
   }
 
-  async function togglePaid(project: Project, paid: boolean) {
-    setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, paid: (paid ? 1 : 0) as 0 | 1 } : p)));
-    await api.updateProject(project.id, { paid: (paid ? 1 : 0) as 0 | 1 });
+  async function togglePaid(video: Video, paid: boolean) {
+    setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, paid: (paid ? 1 : 0) as 0 | 1 } : v)));
+    await api.updateVideo(video.id, { paid: (paid ? 1 : 0) as 0 | 1 });
+  }
+
+  async function handleDeleteFolder(folder: Folder) {
+    if (!confirm(`Delete "${folder.name}"? Anything inside moves up a level — nothing gets deleted.`)) return;
+    await api.deleteFolder(folder.id);
+    refresh();
   }
 
   if (loading || !client || !clientId) {
     return <div className="p-10 text-center text-slate-400">Loading...</div>;
   }
 
-  const mainProjects = projects.filter((p) => p.type !== "reel");
-  const reels = projects.filter((p) => p.type === "reel");
+  const amountOwed = videos.filter((v) => !v.paid && v.price).reduce((sum, v) => sum + (v.price || 0), 0);
 
-  const amountOwed = projects
-    .filter((p) => !p.paid && p.price)
-    .reduce((sum, p) => sum + (p.price || 0), 0);
+  const visibleFolders = folders
+    .filter((f) => f.parent_folder_id === currentFolderId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const visibleVideos = videos
+    .filter((v) => v.folder_id === currentFolderId)
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+
+  const breadcrumb: Folder[] = [];
+  let cursor = currentFolderId ? folders.find((f) => f.id === currentFolderId) : undefined;
+  while (cursor) {
+    breadcrumb.unshift(cursor);
+    cursor = cursor.parent_folder_id ? folders.find((f) => f.id === cursor!.parent_folder_id) : undefined;
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-10">
@@ -133,156 +156,193 @@ export default function ClientDetail() {
         </div>
       </div>
 
-      <div className="mb-8">
-        <ClientCalendar clientId={clientId} projects={projects} />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1 text-sm">
+          <button
+            onClick={() => setCurrentFolderId(null)}
+            className={`rounded px-2 py-1 ${
+              currentFolderId === null ? "font-semibold text-slate-100" : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            🏠 {client.name}
+          </button>
+          {breadcrumb.map((f, i) => (
+            <span key={f.id} className="flex items-center gap-1">
+              <span className="text-slate-600">/</span>
+              <button
+                onClick={() => setCurrentFolderId(f.id)}
+                className={`rounded px-2 py-1 ${
+                  i === breadcrumb.length - 1
+                    ? "font-semibold text-slate-100"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {f.name}
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowNewFolder(true)}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+          >
+            + New Folder
+          </button>
+          <button
+            onClick={() => setShowNewVideo(true)}
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+          >
+            + New Video
+          </button>
+        </div>
       </div>
 
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-100">Projects</h2>
-        <button
-          onClick={() => setShowNew(true)}
-          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-        >
-          + New Project
-        </button>
-      </div>
-
-      {mainProjects.length === 0 ? (
+      {visibleFolders.length === 0 && visibleVideos.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-700 p-12 text-center text-slate-400">
-          No projects yet for this client.
+          Empty folder. Add a video or make a subfolder.
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {mainProjects.map((p) => (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          {visibleFolders.map((f) => (
             <div
-              key={p.id}
+              key={f.id}
+              className="group relative rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-sm transition hover:border-brand-500"
+            >
+              <button onClick={() => setCurrentFolderId(f.id)} className="block w-full text-left">
+                <div className="mb-2 text-3xl">📁</div>
+                <p className="truncate text-sm font-medium text-slate-100">{f.name}</p>
+                <p className="text-xs text-slate-500">
+                  {folders.filter((sub) => sub.parent_folder_id === f.id).length +
+                    videos.filter((v) => v.folder_id === f.id).length}{" "}
+                  item(s)
+                </p>
+              </button>
+              <div className="mt-2 flex gap-2 opacity-0 transition group-hover:opacity-100">
+                <button
+                  onClick={() => setRenamingFolder(f)}
+                  className="text-xs text-slate-400 hover:text-slate-200"
+                >
+                  Rename
+                </button>
+                <button onClick={() => setMovingFolder(f)} className="text-xs text-slate-400 hover:text-slate-200">
+                  Move
+                </button>
+                <button
+                  onClick={() => handleDeleteFolder(f)}
+                  className="text-xs text-red-400 hover:text-red-300"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {visibleVideos.map((v) => (
+            <div
+              key={v.id}
               className="rounded-xl border border-slate-800 bg-slate-900 shadow-sm transition hover:border-brand-500 hover:shadow-md"
             >
-              <Link to={`/clients/${clientId}/projects/${p.id}`} className="block p-5 pb-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 className="font-medium text-slate-100">{p.name}</h3>
-                  <StatusBadge status={p.status} />
+              <Link to={`/clients/${clientId}/videos/${v.id}`} className="block p-4 pb-2">
+                <div className="mb-2 text-3xl">🎬</div>
+                <div className="mb-1 flex items-center justify-between gap-1">
+                  <p className="truncate text-sm font-medium text-slate-100">{v.name}</p>
                 </div>
-                <p className="text-xs text-slate-400">
-                  {p.export_link ? "Final export ready" : p.footage_link ? "Footage linked" : "Not started"}
+                <StatusBadge status={v.status} />
+                <p className="mt-1 text-xs text-slate-400">
+                  {v.export_link ? "Final export ready" : v.footage_link ? "Footage linked" : "Not started"}
                 </p>
               </Link>
-              <div className="flex items-center justify-between border-t border-slate-800 px-5 py-3">
-                <span className={`text-xs font-medium ${p.price != null ? "text-slate-300" : "text-slate-600"}`}>
-                  {p.price != null ? formatMoney(p.price) : "No price set"}
+              <div className="flex items-center justify-between border-t border-slate-800 px-4 py-2">
+                <span className={`text-xs font-medium ${v.price != null ? "text-slate-300" : "text-slate-600"}`}>
+                  {v.price != null ? formatMoney(v.price) : "No price"}
                 </span>
-                <label
-                  className="flex items-center gap-1.5 text-xs font-medium text-slate-300"
-                  onClick={(e) => e.stopPropagation()}
-                >
+                <label className="flex items-center gap-1 text-xs" onClick={(e) => e.stopPropagation()}>
                   <input
                     type="checkbox"
-                    checked={Boolean(p.paid)}
-                    onChange={(e) => togglePaid(p, e.target.checked)}
+                    checked={Boolean(v.paid)}
+                    onChange={(e) => togglePaid(v, e.target.checked)}
                     className="h-3.5 w-3.5 rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
                   />
-                  <span className={p.paid ? "text-emerald-400" : "text-amber-400"}>
-                    {p.paid ? "Paid" : "Unpaid"}
-                  </span>
+                  <span className={v.paid ? "text-emerald-400" : "text-amber-400"}>{v.paid ? "Paid" : "Unpaid"}</span>
                 </label>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mb-4 mt-10 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">Reels</h2>
-          <p className="text-xs text-slate-500">Quick daily turnarounds — log one without a full project card.</p>
-        </div>
-        <button
-          onClick={() => setShowLogReel(true)}
-          className="rounded-lg border border-brand-500/50 px-4 py-2 text-sm font-medium text-brand-300 hover:bg-brand-500/10"
-        >
-          + Log Reel
-        </button>
-      </div>
-
-      {reels.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-sm text-slate-500">
-          No reels logged yet.
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {reels.map((r) => (
-            <div
-              key={r.id}
-              className="rounded-lg border border-slate-800 bg-slate-900 shadow-sm transition hover:border-brand-500"
-            >
-              <Link to={`/clients/${clientId}/projects/${r.id}`} className="block p-3 pb-2">
-                <p className="mb-1 text-xs font-medium text-slate-100">{r.name}</p>
-                <p className="text-[11px] text-slate-500">
-                  {new Date(r.created_date + "T00:00:00").toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </p>
-                {r.export_link ? (
-                  <p className="mt-1 text-[11px] font-medium text-emerald-400">Export ready ✓</p>
-                ) : (
-                  <p className="mt-1 text-[11px] text-slate-500">No export yet</p>
-                )}
-              </Link>
-              <div className="flex items-center justify-between border-t border-slate-800 px-3 py-2">
-                <span className="text-[11px] text-slate-400">{r.price != null ? formatMoney(r.price) : "—"}</span>
-                <label
-                  className="flex items-center gap-1 text-[11px]"
-                  onClick={(e) => e.stopPropagation()}
+              <div className="border-t border-slate-800 px-4 py-2">
+                <button
+                  onClick={() => setMovingVideo(v)}
+                  className="text-xs text-slate-400 hover:text-slate-200"
                 >
-                  <input
-                    type="checkbox"
-                    checked={Boolean(r.paid)}
-                    onChange={(e) => togglePaid(r, e.target.checked)}
-                    className="h-3 w-3 rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
-                  />
-                  <span className={r.paid ? "text-emerald-400" : "text-amber-400"}>
-                    {r.paid ? "Paid" : "Unpaid"}
-                  </span>
-                </label>
+                  Move to folder
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {showNew && (
-        <Modal title="New Project" onClose={() => setShowNew(false)}>
-          <form onSubmit={handleCreateProject} className="space-y-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-400">Project Name</label>
-              <input
-                autoFocus
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
-                placeholder="e.g. Q3 Brand Video"
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
-            >
-              Create Project
-            </button>
-          </form>
-        </Modal>
-      )}
-
-      {showLogReel && (
-        <LogReelModal
-          clientId={clientId}
-          onClose={() => setShowLogReel(false)}
-          onSaved={() => {
-            setShowLogReel(false);
+      {showNewFolder && (
+        <NewFolderModal
+          onClose={() => setShowNewFolder(false)}
+          onCreate={async (name) => {
+            if (!clientId) return;
+            await api.createFolder(clientId, { name, parent_folder_id: currentFolderId });
+            setShowNewFolder(false);
             refresh();
           }}
         />
+      )}
+
+      {renamingFolder && (
+        <NewFolderModal
+          title="Rename Folder"
+          initialName={renamingFolder.name}
+          onClose={() => setRenamingFolder(null)}
+          onCreate={async (name) => {
+            await api.updateFolder(renamingFolder.id, { name });
+            setRenamingFolder(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {movingFolder && (
+        <FolderPicker
+          title={`Move "${movingFolder.name}" to...`}
+          folders={folders}
+          excludeFolderId={movingFolder.id}
+          onClose={() => setMovingFolder(null)}
+          onSelect={async (folderId) => {
+            await api.updateFolder(movingFolder.id, { parent_folder_id: folderId });
+            setMovingFolder(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {movingVideo && (
+        <FolderPicker
+          title={`Move "${movingVideo.name}" to...`}
+          folders={folders}
+          onClose={() => setMovingVideo(null)}
+          onSelect={async (folderId) => {
+            await api.updateVideo(movingVideo.id, { folder_id: folderId });
+            setMovingVideo(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {showNewVideo && (
+        <Modal title="New Video" onClose={() => setShowNewVideo(false)}>
+          <NewVideoForm
+            onCreate={async (name) => {
+              if (!clientId) return;
+              await api.createVideo(clientId, { name, folder_id: currentFolderId });
+              setShowNewVideo(false);
+              refresh();
+            }}
+          />
+        </Modal>
       )}
 
       {showEditClient && (
@@ -299,96 +359,72 @@ export default function ClientDetail() {
   );
 }
 
-function LogReelModal({
-  clientId,
+function NewFolderModal({
+  title = "New Folder",
+  initialName = "",
   onClose,
-  onSaved,
+  onCreate,
 }: {
-  clientId: string;
+  title?: string;
+  initialName?: string;
   onClose: () => void;
-  onSaved: () => void;
+  onCreate: (name: string) => void;
 }) {
-  const todayLabel = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const [name, setName] = useState(`Reel — ${todayLabel}`);
-  const [exportLink, setExportLink] = useState("");
-  const [price, setPrice] = useState("");
-  const [paid, setPaid] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setSaving(true);
-    await api.createProject(clientId, {
-      name,
-      type: "reel",
-      status: "delivered",
-      export_link: exportLink || null,
-      price: price ? Number(price) : null,
-      paid: (paid ? 1 : 0) as 0 | 1,
-    });
-    setSaving(false);
-    onSaved();
-  }
-
+  const [name, setName] = useState(initialName);
   return (
-    <Modal title="Log a Reel" onClose={onClose}>
-      <form onSubmit={handleSave} className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-400">Name</label>
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-400">Final Export Link</label>
-          <input
-            value={exportLink}
-            onChange={(e) => setExportLink(e.target.value)}
-            placeholder="https://drive.google.com/... final video"
-            className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-400">Price</label>
-            <div className="flex items-center rounded-lg border border-slate-700 bg-slate-950 pl-3 focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500">
-              <span className="text-sm text-slate-400">$</span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="50"
-                className="w-full rounded-lg border-none bg-transparent px-2 py-2 text-sm outline-none"
-              />
-            </div>
-          </div>
-          <div className="flex items-end">
-            <label className="flex items-center gap-2 pb-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
-                checked={paid}
-                onChange={(e) => setPaid(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-700 text-brand-600 focus:ring-brand-500"
-              />
-              Paid
-            </label>
-          </div>
-        </div>
+    <Modal title={title} onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim()) onCreate(name.trim());
+        }}
+        className="space-y-3"
+      >
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Folder name"
+          className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+        />
         <button
           type="submit"
-          disabled={saving}
-          className="w-full rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          className="w-full rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
         >
-          {saving ? "Saving..." : "Log Reel"}
+          Save
         </button>
       </form>
     </Modal>
+  );
+}
+
+function NewVideoForm({ onCreate }: { onCreate: (name: string) => void }) {
+  const [name, setName] = useState("");
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (name.trim()) onCreate(name.trim());
+      }}
+      className="space-y-3"
+    >
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-400">Video Name</label>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full rounded-lg border border-slate-700 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+          placeholder="e.g. Q3 Brand Video"
+        />
+      </div>
+      <button
+        type="submit"
+        className="w-full rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+      >
+        Create Video
+      </button>
+    </form>
   );
 }
 

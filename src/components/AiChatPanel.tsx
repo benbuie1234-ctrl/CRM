@@ -3,8 +3,9 @@ import { Link } from "react-router-dom";
 import { api, ChatAction, ChatMessage } from "../lib/api";
 
 const WELCOME =
-  "Hey — I can do pretty much anything on this site: add/edit/delete clients or projects, mark things paid, log a " +
-  "reel, summarize a client's message into instructions, or just answer questions about your data. Try:\n\n" +
+  "Hey — I can do almost anything on this site: add/edit clients, make folders, add/edit videos, move things around, " +
+  "mark videos paid, summarize a client's message into instructions, or just answer questions about your data. " +
+  "The one thing I can't do is delete anything — that's on you. Try:\n\n" +
   '"Create a client named Damien May" or "Mark Q3 Promo as delivered" or "Who owes me money?"';
 
 export default function AiChatPanel() {
@@ -85,17 +86,17 @@ export default function AiChatPanel() {
             </div>
             {actions[i] && (
               <div className="mt-1.5">
-                {actions[i]!.ok && actions[i]!.deleted ? (
-                  <span className="inline-block rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300">
-                    🗑 Deleted "{actions[i]!.deleted}"
-                  </span>
-                ) : actions[i]!.ok && actions[i]!.project ? (
+                {actions[i]!.ok && actions[i]!.video ? (
                   <Link
-                    to={`/clients/${actions[i]!.project!.client_id}/projects/${actions[i]!.project!.id}`}
+                    to={`/clients/${actions[i]!.video!.client_id}/videos/${actions[i]!.video!.id}`}
                     className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20"
                   >
-                    ✓ {actions[i]!.project!.name} — View Project
+                    ✓ {actions[i]!.video!.name} — View Video
                   </Link>
+                ) : actions[i]!.ok && actions[i]!.folder ? (
+                  <span className="inline-block rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+                    ✓ Folder "{actions[i]!.folder!.name}" created
+                  </span>
                 ) : actions[i]!.ok && actions[i]!.client ? (
                   <Link
                     to={`/clients/${actions[i]!.client!.id}`}

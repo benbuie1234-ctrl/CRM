@@ -3,10 +3,12 @@
 A simple client management dashboard for freelance video editing work.
 
 - **Dashboard** → list of clients
-- **Client page** → their Drive folder link + all their projects + how much they owe (per-video) or their monthly retainer rate
-- **Project card** → footage link, reference video link(s) the client sent, editing instructions, final export link, status, price and paid/unpaid
-- **Share link** → every project has a unique public URL you can send to the client, showing a read-only view (instructions, footage, final export) — no login required for them
-- **AI Assistant** → paste a client's raw message on any project card and Workers AI summarizes it into a clean editing brief (deliverable specs, style, music, edit notes, deadline, open questions) you can drop straight into the Instructions field
+- **Client page** → a Finder/Frame.io-style file browser: nested folders you create and organize however you want, with video cards (footage link, reference links, instructions, final export link, status, price, paid) inside them
+- **Client Portal link** → one public URL per client showing their whole folder tree; clients can create/rename/move/delete folders and move videos between them, but can't edit or delete a video itself
+- **Single video share link** → each video also has its own public URL for sharing just one deliverable
+- **AI Assistant** → a persistent chat panel on every page. It can create/edit clients, folders, and videos, summarize a pasted client message into instructions, and answer questions about your data — it cannot delete anything
+
+Every change — whether made in the UI or by the AI assistant — refreshes the page live via a `crm:data-changed` browser event, so the AI editing a client you're currently viewing shows up immediately.
 
 Everything else (the dashboard itself) is behind a single shared passphrase, since it holds all your client links in one place.
 
@@ -62,7 +64,7 @@ You can also deploy manually with `npm run deploy` if you're authenticated local
 
 ## Notes / things to know
 
-- The admin dashboard (client list, editing project details) is protected by one shared passphrase cookie — good for a single freelancer, not built for multiple team logins.
-- Client share links (`/share/:slug`) are unguessable but not password protected — anyone with the link can view that one project's instructions/footage/export links. Don't reuse a link across clients.
-- Deleting a client deletes all of their projects (cascade).
-- A client's billing type (per-video vs. retainer) can be switched at any time — any unpaid per-video balance stays tracked and visible even after switching to retainer, so nothing gets lost mid-transition.
+- The admin dashboard (client list, editing videos) is protected by one shared passphrase cookie — good for a single freelancer, not built for multiple team logins.
+- Client share links (`/portal/:slug`, `/share/:slug`) are unguessable but not password protected. Anyone with a link has full read + folder-organize access for that client (portal) or read access to one video (share). Don't reuse a link across clients.
+- Deleting a folder never deletes what's inside it — its videos and subfolders just move up one level. Only deleting a client cascades to everything of theirs.
+- A client's billing type (per-video vs. retainer) can be switched at any time — any unpaid balance stays tracked and visible even after switching to retainer.

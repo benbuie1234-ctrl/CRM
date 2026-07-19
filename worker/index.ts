@@ -9,7 +9,6 @@ export interface Env {
 const AUTH_COOKIE = "crm_auth";
 const VALID_STATUSES = ["in_progress", "review", "delivered"];
 const VALID_BILLING_TYPES = ["per_project", "retainer"];
-const VALID_PROJECT_TYPES = ["project", "reel"];
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -69,12 +68,14 @@ function handleLogout(): Response {
   return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
 }
 
+// ---------- Clients ----------
+
 async function listClients(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
-    `SELECT c.*, COUNT(p.id) as project_count,
-       COALESCE(SUM(CASE WHEN p.paid = 0 THEN p.price ELSE 0 END), 0) as amount_owed
+    `SELECT c.*, COUNT(v.id) as project_count,
+       COALESCE(SUM(CASE WHEN v.paid = 0 THEN v.price ELSE 0 END), 0) as amount_owed
      FROM clients c
-     LEFT JOIN projects p ON p.client_id = c.id
+     LEFT JOIN videos v ON v.client_id = c.id
      GROUP BY c.id
      ORDER BY c.created_at DESC`
   ).all();
@@ -179,22 +180,99 @@ async function deleteClient(env: Env, id: string): Promise<Response> {
   return new Response(null, { status: 204 });
 }
 
-async function listProjects(env: Env, clientId: string): Promise<Response> {
+// ---------- Folders ----------
+
+async function listFolders(env: Env, clientId: string): Promise<Response> {
   const client = await env.DB.prepare(`SELECT id FROM clients WHERE id = ?`).bind(clientId).first();
   if (!client) return errorResponse("Client not found", 404);
 
   const { results } = await env.DB.prepare(
-    `SELECT * FROM projects WHERE client_id = ? ORDER BY created_at DESC`
+    `SELECT * FROM folders WHERE client_id = ? ORDER BY name COLLATE NOCASE`
   )
     .bind(clientId)
     .all();
   return json(results);
 }
 
-type ProjectInput = {
+async function insertFolderRow(env: Env, clientId: string, name: string, parentFolderId: string | null) {
+  const id = newId();
+  await env.DB.prepare(`INSERT INTO folders (id, client_id, parent_folder_id, name) VALUES (?, ?, ?, ?)`)
+    .bind(id, clientId, parentFolderId || null, name.trim())
+    .run();
+  return env.DB.prepare(`SELECT * FROM folders WHERE id = ?`).bind(id).first();
+}
+
+async function createFolder(request: Request, env: Env, clientId: string): Promise<Response> {
+  const client = await env.DB.prepare(`SELECT id FROM clients WHERE id = ?`).bind(clientId).first();
+  if (!client) return errorResponse("Client not found", 404);
+
+  const body = (await request.json().catch(() => ({}))) as any;
+  if (!body.name || !String(body.name).trim()) return errorResponse("Folder name is required");
+
+  if (body.parent_folder_id) {
+    const parent = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
+      .bind(body.parent_folder_id, clientId)
+      .first();
+    if (!parent) return errorResponse("Parent folder not found", 404);
+  }
+
+  const folder = await insertFolderRow(env, clientId, body.name, body.parent_folder_id || null);
+  return json(folder, 201);
+}
+
+async function updateFolder(request: Request, env: Env, id: string): Promise<Response> {
+  const existing = (await env.DB.prepare(`SELECT * FROM folders WHERE id = ?`).bind(id).first()) as any;
+  if (!existing) return errorResponse("Folder not found", 404);
+
+  const body = (await request.json().catch(() => ({}))) as any;
+  const name = body.name !== undefined ? body.name : existing.name;
+  const parent_folder_id = body.parent_folder_id !== undefined ? body.parent_folder_id : existing.parent_folder_id;
+
+  if (!name || !String(name).trim()) return errorResponse("Folder name is required");
+
+  if (parent_folder_id) {
+    if (parent_folder_id === id) return errorResponse("A folder can't be moved into itself");
+    const parent = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
+      .bind(parent_folder_id, existing.client_id)
+      .first();
+    if (!parent) return errorResponse("Parent folder not found", 404);
+    // prevent creating a cycle by moving a folder under one of its own descendants
+    let cursor: any = parent;
+    while (cursor) {
+      if (cursor.id === id) return errorResponse("Can't move a folder into its own subfolder");
+      cursor = cursor.parent_folder_id
+        ? await env.DB.prepare(`SELECT id, parent_folder_id FROM folders WHERE id = ?`).bind(cursor.parent_folder_id).first()
+        : null;
+    }
+  }
+
+  await env.DB.prepare(`UPDATE folders SET name = ?, parent_folder_id = ? WHERE id = ?`)
+    .bind(name.trim(), parent_folder_id || null, id)
+    .run();
+
+  const updated = await env.DB.prepare(`SELECT * FROM folders WHERE id = ?`).bind(id).first();
+  return json(updated);
+}
+
+async function deleteFolder(env: Env, id: string): Promise<Response> {
+  const existing = (await env.DB.prepare(`SELECT * FROM folders WHERE id = ?`).bind(id).first()) as any;
+  if (!existing) return errorResponse("Folder not found", 404);
+
+  const parentId = existing.parent_folder_id || null;
+  // reparent children (folders and videos) up to this folder's parent instead of deleting them
+  await env.DB.prepare(`UPDATE folders SET parent_folder_id = ? WHERE parent_folder_id = ?`).bind(parentId, id).run();
+  await env.DB.prepare(`UPDATE videos SET folder_id = ? WHERE folder_id = ?`).bind(parentId, id).run();
+  await env.DB.prepare(`DELETE FROM folders WHERE id = ?`).bind(id).run();
+
+  return new Response(null, { status: 204 });
+}
+
+// ---------- Videos ----------
+
+type VideoInput = {
   name: string;
   status?: string;
-  type?: string;
+  folder_id?: string | null;
   footage_link?: string | null;
   reference_links?: string | null;
   instructions?: string | null;
@@ -205,26 +283,25 @@ type ProjectInput = {
   completed_date?: string | null;
 };
 
-async function insertProjectRow(env: Env, clientId: string, input: ProjectInput) {
+async function insertVideoRow(env: Env, clientId: string, input: VideoInput) {
   const id = newId();
   const slug = newSlug();
   const today = new Date().toISOString().slice(0, 10);
   const status = input.status && VALID_STATUSES.includes(input.status) ? input.status : "in_progress";
-  const type = input.type && VALID_PROJECT_TYPES.includes(input.type) ? input.type : "project";
   const completedDate = input.completed_date || (status === "delivered" ? today : null);
 
   await env.DB.prepare(
-    `INSERT INTO projects
-       (id, client_id, name, status, type, footage_link, reference_links, instructions, export_link, price, paid,
+    `INSERT INTO videos
+       (id, client_id, folder_id, name, status, footage_link, reference_links, instructions, export_link, price, paid,
         created_date, completed_date, share_slug)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
       clientId,
+      input.folder_id || null,
       input.name.trim(),
       status,
-      type,
       input.footage_link || null,
       input.reference_links || null,
       input.instructions || null,
@@ -237,35 +314,54 @@ async function insertProjectRow(env: Env, clientId: string, input: ProjectInput)
     )
     .run();
 
-  return env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(id).first();
+  return env.DB.prepare(`SELECT * FROM videos WHERE id = ?`).bind(id).first();
 }
 
-async function createProject(request: Request, env: Env, clientId: string): Promise<Response> {
+async function listVideos(env: Env, clientId: string): Promise<Response> {
+  const client = await env.DB.prepare(`SELECT id FROM clients WHERE id = ?`).bind(clientId).first();
+  if (!client) return errorResponse("Client not found", 404);
+
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM videos WHERE client_id = ? ORDER BY created_at DESC`
+  )
+    .bind(clientId)
+    .all();
+  return json(results);
+}
+
+async function createVideo(request: Request, env: Env, clientId: string): Promise<Response> {
   const client = await env.DB.prepare(`SELECT id FROM clients WHERE id = ?`).bind(clientId).first();
   if (!client) return errorResponse("Client not found", 404);
 
   const body = (await request.json().catch(() => ({}))) as any;
-  if (!body.name || !String(body.name).trim()) return errorResponse("Project name is required");
+  if (!body.name || !String(body.name).trim()) return errorResponse("Video name is required");
 
-  const project = await insertProjectRow(env, clientId, body);
-  return json(project, 201);
+  if (body.folder_id) {
+    const folder = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
+      .bind(body.folder_id, clientId)
+      .first();
+    if (!folder) return errorResponse("Folder not found", 404);
+  }
+
+  const video = await insertVideoRow(env, clientId, body);
+  return json(video, 201);
 }
 
-async function getProject(env: Env, id: string): Promise<Response> {
-  const project = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(id).first();
-  if (!project) return errorResponse("Project not found", 404);
-  return json(project);
+async function getVideo(env: Env, id: string): Promise<Response> {
+  const video = await env.DB.prepare(`SELECT * FROM videos WHERE id = ?`).bind(id).first();
+  if (!video) return errorResponse("Video not found", 404);
+  return json(video);
 }
 
-async function updateProject(request: Request, env: Env, id: string): Promise<Response> {
-  const existing = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(id).first();
-  if (!existing) return errorResponse("Project not found", 404);
+async function updateVideo(request: Request, env: Env, id: string): Promise<Response> {
+  const existing = await env.DB.prepare(`SELECT * FROM videos WHERE id = ?`).bind(id).first();
+  if (!existing) return errorResponse("Video not found", 404);
 
   const body = (await request.json().catch(() => ({}))) as any;
   const ex = existing as any;
   const name = body.name ?? ex.name;
   const status = body.status ?? ex.status;
-  const type = body.type && VALID_PROJECT_TYPES.includes(body.type) ? body.type : ex.type;
+  const folder_id = body.folder_id !== undefined ? body.folder_id : ex.folder_id;
   const footage_link = body.footage_link !== undefined ? body.footage_link : ex.footage_link;
   const reference_links = body.reference_links !== undefined ? body.reference_links : ex.reference_links;
   const instructions = body.instructions !== undefined ? body.instructions : ex.instructions;
@@ -282,19 +378,26 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
     completed_date = ex.completed_date;
   }
 
-  if (!name || !String(name).trim()) return errorResponse("Project name is required");
+  if (!name || !String(name).trim()) return errorResponse("Video name is required");
   if (!VALID_STATUSES.includes(status)) return errorResponse("Invalid status");
 
+  if (folder_id) {
+    const folder = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
+      .bind(folder_id, ex.client_id)
+      .first();
+    if (!folder) return errorResponse("Folder not found", 404);
+  }
+
   await env.DB.prepare(
-    `UPDATE projects
-     SET name = ?, status = ?, type = ?, footage_link = ?, reference_links = ?, instructions = ?, export_link = ?,
+    `UPDATE videos
+     SET name = ?, status = ?, folder_id = ?, footage_link = ?, reference_links = ?, instructions = ?, export_link = ?,
          price = ?, paid = ?, created_date = ?, completed_date = ?, updated_at = datetime('now')
      WHERE id = ?`
   )
     .bind(
       name,
       status,
-      type,
+      folder_id || null,
       footage_link,
       reference_links,
       instructions,
@@ -307,17 +410,133 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
     )
     .run();
 
-  const updated = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(id).first();
+  const updated = await env.DB.prepare(`SELECT * FROM videos WHERE id = ?`).bind(id).first();
   return json(updated);
 }
 
-async function deleteProject(env: Env, id: string): Promise<Response> {
-  const existing = await env.DB.prepare(`SELECT id FROM projects WHERE id = ?`).bind(id).first();
-  if (!existing) return errorResponse("Project not found", 404);
+async function deleteVideo(env: Env, id: string): Promise<Response> {
+  const existing = await env.DB.prepare(`SELECT id FROM videos WHERE id = ?`).bind(id).first();
+  if (!existing) return errorResponse("Video not found", 404);
 
-  await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run();
+  await env.DB.prepare(`DELETE FROM videos WHERE id = ?`).bind(id).run();
   return new Response(null, { status: 204 });
 }
+
+// ---------- Public share (single video) ----------
+
+async function getShared(env: Env, slug: string): Promise<Response> {
+  const video = await env.DB.prepare(`SELECT * FROM videos WHERE share_slug = ?`).bind(slug).first();
+  if (!video) return errorResponse("Not found", 404);
+
+  const client = await env.DB.prepare(`SELECT name FROM clients WHERE id = ?`)
+    .bind((video as any).client_id)
+    .first();
+
+  return json({ video, client });
+}
+
+// ---------- Public client portal (folders + videos, client can organize but not edit/delete videos) ----------
+
+async function resolveClientBySlug(env: Env, slug: string): Promise<{ id: string; name: string } | null> {
+  const client = await env.DB.prepare(`SELECT id, name FROM clients WHERE share_slug = ?`).bind(slug).first();
+  return (client as any) || null;
+}
+
+async function getClientPortal(env: Env, slug: string): Promise<Response> {
+  const client = await resolveClientBySlug(env, slug);
+  if (!client) return errorResponse("Not found", 404);
+
+  const { results: folders } = await env.DB.prepare(
+    `SELECT id, parent_folder_id, name FROM folders WHERE client_id = ? ORDER BY name COLLATE NOCASE`
+  )
+    .bind(client.id)
+    .all();
+
+  const { results: videos } = await env.DB.prepare(
+    `SELECT id, folder_id, name, status, footage_link, instructions, export_link, share_slug, created_date, completed_date
+     FROM videos WHERE client_id = ? ORDER BY created_at DESC`
+  )
+    .bind(client.id)
+    .all();
+
+  return json({ client, folders, videos });
+}
+
+async function portalCreateFolder(request: Request, env: Env, slug: string): Promise<Response> {
+  const client = await resolveClientBySlug(env, slug);
+  if (!client) return errorResponse("Not found", 404);
+
+  const body = (await request.json().catch(() => ({}))) as any;
+  if (!body.name || !String(body.name).trim()) return errorResponse("Folder name is required");
+
+  if (body.parent_folder_id) {
+    const parent = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
+      .bind(body.parent_folder_id, client.id)
+      .first();
+    if (!parent) return errorResponse("Parent folder not found", 404);
+  }
+
+  const folder = await insertFolderRow(env, client.id, body.name, body.parent_folder_id || null);
+  return json(folder, 201);
+}
+
+async function portalUpdateFolder(request: Request, env: Env, slug: string, folderId: string): Promise<Response> {
+  const client = await resolveClientBySlug(env, slug);
+  if (!client) return errorResponse("Not found", 404);
+
+  const folder = await env.DB.prepare(`SELECT * FROM folders WHERE id = ? AND client_id = ?`)
+    .bind(folderId, client.id)
+    .first();
+  if (!folder) return errorResponse("Folder not found", 404);
+
+  return updateFolder(request, env, folderId);
+}
+
+async function portalDeleteFolder(env: Env, slug: string, folderId: string): Promise<Response> {
+  const client = await resolveClientBySlug(env, slug);
+  if (!client) return errorResponse("Not found", 404);
+
+  const folder = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
+    .bind(folderId, client.id)
+    .first();
+  if (!folder) return errorResponse("Folder not found", 404);
+
+  return deleteFolder(env, folderId);
+}
+
+async function portalMoveVideo(request: Request, env: Env, slug: string, videoId: string): Promise<Response> {
+  const client = await resolveClientBySlug(env, slug);
+  if (!client) return errorResponse("Not found", 404);
+
+  const video = (await env.DB.prepare(`SELECT * FROM videos WHERE id = ? AND client_id = ?`)
+    .bind(videoId, client.id)
+    .first()) as any;
+  if (!video) return errorResponse("Video not found", 404);
+
+  const body = (await request.json().catch(() => ({}))) as any;
+  const folderId = body.folder_id || null;
+
+  if (folderId) {
+    const folder = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
+      .bind(folderId, client.id)
+      .first();
+    if (!folder) return errorResponse("Folder not found", 404);
+  }
+
+  await env.DB.prepare(`UPDATE videos SET folder_id = ?, updated_at = datetime('now') WHERE id = ?`)
+    .bind(folderId, videoId)
+    .run();
+
+  const updated = await env.DB.prepare(
+    `SELECT id, folder_id, name, status, footage_link, instructions, export_link, share_slug, created_date, completed_date
+     FROM videos WHERE id = ?`
+  )
+    .bind(videoId)
+    .first();
+  return json(updated);
+}
+
+// ---------- AI chat ----------
 
 async function findClientByName(env: Env, name: string): Promise<{ id: string; name: string } | null | "ambiguous"> {
   const exact = await env.DB.prepare(`SELECT id, name FROM clients WHERE lower(name) = lower(?)`)
@@ -333,18 +552,38 @@ async function findClientByName(env: Env, name: string): Promise<{ id: string; n
   return null;
 }
 
-async function findProjectByName(
+async function findVideoByName(
   env: Env,
   clientId: string,
   name: string
 ): Promise<{ id: string } | null | "ambiguous"> {
-  const exact = await env.DB.prepare(`SELECT id FROM projects WHERE client_id = ? AND lower(name) = lower(?)`)
+  const exact = await env.DB.prepare(`SELECT id FROM videos WHERE client_id = ? AND lower(name) = lower(?)`)
     .bind(clientId, name)
     .first();
   if (exact) return exact as any;
 
   const { results } = await env.DB.prepare(
-    `SELECT id FROM projects WHERE client_id = ? AND lower(name) LIKE '%' || lower(?) || '%'`
+    `SELECT id FROM videos WHERE client_id = ? AND lower(name) LIKE '%' || lower(?) || '%'`
+  )
+    .bind(clientId, name)
+    .all();
+  if (results.length === 1) return results[0] as any;
+  if (results.length > 1) return "ambiguous";
+  return null;
+}
+
+async function findFolderByName(
+  env: Env,
+  clientId: string,
+  name: string
+): Promise<{ id: string } | null | "ambiguous"> {
+  const exact = await env.DB.prepare(`SELECT id FROM folders WHERE client_id = ? AND lower(name) = lower(?)`)
+    .bind(clientId, name)
+    .first();
+  if (exact) return exact as any;
+
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM folders WHERE client_id = ? AND lower(name) LIKE '%' || lower(?) || '%'`
   )
     .bind(clientId, name)
     .all();
@@ -354,13 +593,7 @@ async function findProjectByName(
 }
 
 type ChatAction = {
-  type:
-    | "create_client"
-    | "update_client"
-    | "delete_client"
-    | "create_project"
-    | "update_project"
-    | "delete_project";
+  type: "create_client" | "update_client" | "create_folder" | "create_video" | "update_video";
   client_name?: string;
   new_client_name?: string;
   email?: string;
@@ -368,9 +601,11 @@ type ChatAction = {
   notes?: string;
   billing_type?: string;
   retainer_amount?: number;
-  project_name?: string;
-  new_project_name?: string;
-  project_type?: string;
+  folder_name?: string;
+  parent_folder_name?: string;
+  video_name?: string;
+  new_video_name?: string;
+  move_to_folder?: string;
   price?: number;
   paid?: boolean;
   status?: string;
@@ -383,7 +618,7 @@ type ChatAction = {
 };
 
 type ChatActionResult =
-  | { ok: true; client?: any; project?: any; deleted?: string }
+  | { ok: true; client?: any; folder?: any; video?: any }
   | { ok: false; error: string };
 
 async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionResult> {
@@ -406,7 +641,7 @@ async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionRe
 
   let client = await findClientByName(env, action.client_name);
   if (client === "ambiguous") return { ok: false, error: `Multiple clients match "${action.client_name}" — be more specific` };
-  if (!client && action.type === "create_project") {
+  if (!client && action.type === "create_video") {
     client = await insertClientRow(env, { name: action.client_name });
   }
   if (!client) return { ok: false, error: `No client found matching "${action.client_name}"` };
@@ -431,17 +666,31 @@ async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionRe
     return { ok: true, client: updated };
   }
 
-  if (action.type === "delete_client") {
-    await env.DB.prepare(`DELETE FROM clients WHERE id = ?`).bind(client.id).run();
-    return { ok: true, deleted: client.name };
+  if (action.type === "create_folder") {
+    if (!action.folder_name) return { ok: false, error: "No folder name given" };
+    let parentId: string | null = null;
+    if (action.parent_folder_name) {
+      const parent = await findFolderByName(env, client.id, action.parent_folder_name);
+      if (parent === "ambiguous") return { ok: false, error: `Multiple folders match "${action.parent_folder_name}"` };
+      if (!parent) return { ok: false, error: `No folder found matching "${action.parent_folder_name}"` };
+      parentId = parent.id;
+    }
+    const folder = await insertFolderRow(env, client.id, action.folder_name, parentId);
+    return { ok: true, folder, client };
   }
 
-  if (action.type === "create_project") {
-    if (!action.project_name) return { ok: false, error: "No project name given" };
-    const project = await insertProjectRow(env, client.id, {
-      name: action.project_name,
+  if (action.type === "create_video") {
+    if (!action.video_name) return { ok: false, error: "No video name given" };
+    let folderId: string | null = null;
+    if (action.move_to_folder) {
+      const folder = await findFolderByName(env, client.id, action.move_to_folder);
+      if (folder === "ambiguous") return { ok: false, error: `Multiple folders match "${action.move_to_folder}"` };
+      if (folder) folderId = folder.id;
+    }
+    const video = await insertVideoRow(env, client.id, {
+      name: action.video_name,
       status: action.status,
-      type: action.project_type,
+      folder_id: folderId,
       price: action.price,
       paid: action.paid,
       instructions: action.instructions,
@@ -451,37 +700,45 @@ async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionRe
       created_date: action.created_date,
       completed_date: action.completed_date,
     });
-    return { ok: true, project, client };
+    return { ok: true, video, client };
   }
 
-  if (action.type === "update_project" || action.type === "delete_project") {
-    if (!action.project_name) return { ok: false, error: "No project name given" };
-    const match = await findProjectByName(env, client.id, action.project_name);
-    if (match === "ambiguous") return { ok: false, error: `Multiple projects match "${action.project_name}"` };
-    if (!match) return { ok: false, error: `No project found matching "${action.project_name}" for ${client.name}` };
-
-    if (action.type === "delete_project") {
-      await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(match.id).run();
-      return { ok: true, deleted: action.project_name };
-    }
+  if (action.type === "update_video") {
+    if (!action.video_name) return { ok: false, error: "No video name given" };
+    const match = await findVideoByName(env, client.id, action.video_name);
+    if (match === "ambiguous") return { ok: false, error: `Multiple videos match "${action.video_name}"` };
+    if (!match) return { ok: false, error: `No video found matching "${action.video_name}" for ${client.name}` };
 
     const fields: string[] = [];
     const values: unknown[] = [];
-    if (action.new_project_name !== undefined) { fields.push("name = ?"); values.push(action.new_project_name); }
+    if (action.new_video_name !== undefined) { fields.push("name = ?"); values.push(action.new_video_name); }
     if (action.price !== undefined) { fields.push("price = ?"); values.push(action.price); }
     if (action.paid !== undefined) { fields.push("paid = ?"); values.push(action.paid ? 1 : 0); }
     if (action.status !== undefined && VALID_STATUSES.includes(action.status)) { fields.push("status = ?"); values.push(action.status); }
-    if (action.project_type !== undefined && VALID_PROJECT_TYPES.includes(action.project_type)) { fields.push("type = ?"); values.push(action.project_type); }
     if (action.instructions !== undefined) { fields.push("instructions = ?"); values.push(action.instructions); }
     if (action.footage_link !== undefined) { fields.push("footage_link = ?"); values.push(action.footage_link); }
     if (action.export_link !== undefined) { fields.push("export_link = ?"); values.push(action.export_link); }
     if (action.reference_links !== undefined) { fields.push("reference_links = ?"); values.push(action.reference_links); }
     if (action.created_date !== undefined) { fields.push("created_date = ?"); values.push(action.created_date); }
+
+    if (action.move_to_folder !== undefined) {
+      if (!action.move_to_folder) {
+        fields.push("folder_id = ?");
+        values.push(null);
+      } else {
+        const folder = await findFolderByName(env, client.id, action.move_to_folder);
+        if (folder === "ambiguous") return { ok: false, error: `Multiple folders match "${action.move_to_folder}"` };
+        if (!folder) return { ok: false, error: `No folder found matching "${action.move_to_folder}"` };
+        fields.push("folder_id = ?");
+        values.push(folder.id);
+      }
+    }
+
     if (action.completed_date !== undefined) {
       fields.push("completed_date = ?");
       values.push(action.completed_date);
     } else if (action.status === "delivered") {
-      const ex = (await env.DB.prepare(`SELECT completed_date FROM projects WHERE id = ?`).bind(match.id).first()) as any;
+      const ex = (await env.DB.prepare(`SELECT completed_date FROM videos WHERE id = ?`).bind(match.id).first()) as any;
       if (!ex.completed_date) {
         fields.push("completed_date = ?");
         values.push(new Date().toISOString().slice(0, 10));
@@ -491,10 +748,10 @@ async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionRe
     if (fields.length > 0) {
       fields.push("updated_at = datetime('now')");
       values.push(match.id);
-      await env.DB.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ?`).bind(...values).run();
+      await env.DB.prepare(`UPDATE videos SET ${fields.join(", ")} WHERE id = ?`).bind(...values).run();
     }
-    const project = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(match.id).first();
-    return { ok: true, project, client };
+    const video = await env.DB.prepare(`SELECT * FROM videos WHERE id = ?`).bind(match.id).first();
+    return { ok: true, video, client };
   }
 
   return { ok: false, error: "Unknown action type" };
@@ -507,70 +764,74 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
 
   const { results: clientRows } = await env.DB.prepare(
     `SELECT c.name, c.email, c.billing_type, c.retainer_amount,
-       COALESCE(SUM(CASE WHEN p.paid = 0 THEN p.price ELSE 0 END), 0) as amount_owed,
-       COUNT(p.id) as project_count
-     FROM clients c LEFT JOIN projects p ON p.client_id = c.id
+       COALESCE(SUM(CASE WHEN v.paid = 0 THEN v.price ELSE 0 END), 0) as amount_owed,
+       COUNT(v.id) as video_count
+     FROM clients c LEFT JOIN videos v ON v.client_id = c.id
      GROUP BY c.id ORDER BY c.name`
   ).all();
-  const { results: projectRows } = await env.DB.prepare(
-    `SELECT c.name as client_name, p.name as project_name, p.type, p.status, p.price, p.paid,
-       p.created_date, p.completed_date
-     FROM projects p JOIN clients c ON c.id = p.client_id
-     ORDER BY c.name, p.created_date DESC`
+  const { results: folderRows } = await env.DB.prepare(
+    `SELECT c.name as client_name, f.name as folder_name, f.parent_folder_id
+     FROM folders f JOIN clients c ON c.id = f.client_id ORDER BY c.name, f.name`
+  ).all();
+  const { results: videoRows } = await env.DB.prepare(
+    `SELECT c.name as client_name, v.name as video_name, v.status, v.price, v.paid,
+       v.created_date, v.completed_date, f.name as folder_name
+     FROM videos v JOIN clients c ON c.id = v.client_id
+     LEFT JOIN folders f ON f.id = v.folder_id
+     ORDER BY c.name, v.created_date DESC`
   ).all();
   const today = new Date().toISOString().slice(0, 10);
 
   const clientSummary = (clientRows as any[])
     .map(
       (c) =>
-        `- ${c.name}${c.email ? ` (${c.email})` : ""}: ${c.project_count} project(s), ` +
+        `- ${c.name}${c.email ? ` (${c.email})` : ""}: ${c.video_count} video(s), ` +
         (c.billing_type === "retainer"
           ? `retainer $${c.retainer_amount ?? 0}/mo`
-          : `owes $${c.amount_owed} from unpaid per-video work`)
+          : `owes $${c.amount_owed} from unpaid work`)
     )
     .join("\n");
-  const projectSummary = (projectRows as any[])
+  const folderSummary = (folderRows as any[])
+    .map((f) => `- ${f.client_name} / folder "${f.folder_name}"`)
+    .join("\n");
+  const videoSummary = (videoRows as any[])
     .map(
-      (p) =>
-        `- ${p.client_name} / "${p.project_name}" (${p.type}): status=${p.status}, price=${p.price ?? "unset"}, ` +
-        `paid=${p.paid ? "yes" : "no"}, created=${p.created_date}, completed=${p.completed_date ?? "not yet"}`
+      (v) =>
+        `- ${v.client_name} / ${v.folder_name ? `"${v.folder_name}"/` : "(unfiled)/"}"${v.video_name}": ` +
+        `status=${v.status}, price=${v.price ?? "unset"}, paid=${v.paid ? "yes" : "no"}, ` +
+        `created=${v.created_date}, completed=${v.completed_date ?? "not yet"}`
     )
     .join("\n");
 
   const systemPrompt =
-    "You are the built-in assistant for a freelance video editor's client-management app (a CRM). You can chat, " +
-    "summarize messy client messages into clean editing briefs, answer questions about the data below, and — most " +
-    "importantly — directly perform ANY action the app itself supports: creating, editing, or deleting clients and " +
-    `project/reel cards. Today's date is ${today}.\n\n` +
-    "CURRENT CLIENTS:\n" +
-    (clientSummary || "(none yet)") +
-    "\n\nCURRENT PROJECTS:\n" +
-    (projectSummary || "(none yet)") +
-    "\n\nUse the data above to answer questions directly (e.g. who owes money, a client's status, how many projects " +
-    "someone has) without needing an action block — you already have everything shown above, don't say you can't " +
-    "look it up.\n\n" +
+    "You are the built-in assistant for a freelance video editor's client-management app (a CRM). Clients each have " +
+    "a nested folder tree (like Finder) that holds video cards. You can chat, summarize messy client messages into " +
+    "clean instructions, answer questions using the data below, and perform actions: create/edit clients, create " +
+    "folders, and create/edit videos (including moving a video into a folder). " +
+    `Today's date is ${today}.\n\n` +
+    "CURRENT CLIENTS:\n" + (clientSummary || "(none yet)") +
+    "\n\nCURRENT FOLDERS:\n" + (folderSummary || "(none yet)") +
+    "\n\nCURRENT VIDEOS:\n" + (videoSummary || "(none yet)") +
+    "\n\nUse this data to answer questions directly (who owes money, a video's status, what's in a folder) without " +
+    "needing an action block — you already have it, don't say you can't look it up.\n\n" +
+    "YOU CANNOT DELETE ANYTHING. There is no delete action available to you at all — if the user asks you to delete " +
+    "or remove a client, folder, or video, tell them you can't do that and they should use the delete button in the " +
+    "app themselves. Never claim to have deleted something.\n\n" +
     "CRITICAL RULE: do exactly the one thing the user asked, using only the information they actually gave you. " +
-    "Never ask a clarifying question for information the user didn't mention and didn't imply is coming — price, " +
-    "instructions, footage links, email, etc. are all OPTIONAL and can be added later. Only ask a question if a " +
-    "TRULY REQUIRED field is missing: a name for the client/project being created, or which existing client/project " +
-    "an update applies to when it's genuinely ambiguous. If the user just says 'add a new client named X', immediately " +
-    "emit the action to create it. If they mention a project for a client that doesn't exist yet, just create the " +
-    "client too as part of create_project — don't stall to ask permission.\n\n" +
-    "EXCEPTION — deletions are the one case where you should pause: before emitting delete_client or delete_project, " +
-    "confirm in plain text once ('Delete Q3 Promo for Acme Fitness — you sure? This can't be undone.') and wait for " +
-    "the user to say yes/confirm/do it in their next message before actually emitting the action. Don't ask twice.\n\n" +
+    "Never ask a clarifying question for information the user didn't mention — price, instructions, links, email, " +
+    "which folder, etc. are all OPTIONAL and can be added/organized later. Only ask if a TRULY REQUIRED name is " +
+    "missing, or an existing client/video/folder reference is genuinely ambiguous. If a client mentioned doesn't " +
+    "exist yet, creating a video for them auto-creates the client too — don't ask permission first.\n\n" +
     "After acting, write ONE short natural-language confirmation sentence, then end your reply with a fenced code " +
-    "block labeled action containing exactly ONE JSON object. Available action types and their fields (omit any " +
-    "field you don't have a value for):\n" +
-    '```action\n{"type":"create_client","client_name":"Damien May","email":"...","drive_link":"...","billing_type":"per_project|retainer","retainer_amount":2000}\n```\n' +
-    '```action\n{"type":"update_client","client_name":"Damien May","new_client_name":"...","email":"...","drive_link":"...","notes":"...","billing_type":"...","retainer_amount":2000}\n```\n' +
-    '```action\n{"type":"delete_client","client_name":"Damien May"}\n```\n' +
-    '```action\n{"type":"create_project","client_name":"Acme Fitness","project_name":"Q3 Promo","project_type":"project|reel","price":500,"paid":false,"status":"in_progress|review|delivered","instructions":"...","footage_link":"...","export_link":"...","reference_links":"...","created_date":"YYYY-MM-DD","completed_date":"YYYY-MM-DD"}\n```\n' +
-    '```action\n{"type":"update_project","client_name":"Acme Fitness","project_name":"Q3 Promo","new_project_name":"...","paid":true,"price":500,"status":"delivered", "...(any create_project field)"}\n```\n' +
-    '```action\n{"type":"delete_project","client_name":"Acme Fitness","project_name":"Q3 Promo"}\n```\n' +
+    "block labeled action containing exactly ONE JSON object. Available action types (omit fields you don't have):\n" +
+    '```action\n{"type":"create_client","client_name":"Damien May","email":"...","billing_type":"per_project|retainer","retainer_amount":2000}\n```\n' +
+    '```action\n{"type":"update_client","client_name":"Damien May","new_client_name":"...","email":"...","notes":"...","billing_type":"...","retainer_amount":2000}\n```\n' +
+    '```action\n{"type":"create_folder","client_name":"Acme Fitness","folder_name":"Reels","parent_folder_name":"..."}\n```\n' +
+    '```action\n{"type":"create_video","client_name":"Acme Fitness","video_name":"Q3 Promo","move_to_folder":"Reels","price":500,"paid":false,"status":"in_progress|review|delivered","instructions":"...","footage_link":"...","export_link":"..."}\n```\n' +
+    '```action\n{"type":"update_video","client_name":"Acme Fitness","video_name":"Q3 Promo","new_video_name":"...","paid":true,"price":500,"status":"delivered","move_to_folder":"Reels"}\n```\n' +
     "Only include fields the user actually gave you — never guess or invent values. Never emit more than one action " +
-    "block per reply. If the request is just conversation or a question you can answer from the data above, reply " +
-    "normally with no action block.";
+    "block per reply. If the request is just conversation or answerable from the data above, reply normally with no " +
+    "action block.";
 
   const messages = [{ role: "system", content: systemPrompt }, ...history];
 
@@ -604,32 +865,7 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
   return json({ reply, action: actionResult });
 }
 
-async function getShared(env: Env, slug: string): Promise<Response> {
-  const project = await env.DB.prepare(`SELECT * FROM projects WHERE share_slug = ?`).bind(slug).first();
-  if (!project) return errorResponse("Not found", 404);
-
-  const client = await env.DB.prepare(`SELECT name FROM clients WHERE id = ?`)
-    .bind((project as any).client_id)
-    .first();
-
-  return json({ project, client });
-}
-
-async function getClientPortal(env: Env, slug: string): Promise<Response> {
-  const client = await env.DB.prepare(`SELECT id, name FROM clients WHERE share_slug = ?`)
-    .bind(slug)
-    .first();
-  if (!client) return errorResponse("Not found", 404);
-
-  const { results } = await env.DB.prepare(
-    `SELECT id, name, status, footage_link, instructions, export_link, share_slug, created_date, completed_date
-     FROM projects WHERE client_id = ? ORDER BY created_at DESC`
-  )
-    .bind((client as any).id)
-    .all();
-
-  return json({ client, projects: results });
-}
+// ---------- Router ----------
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -657,6 +893,21 @@ export default {
     if (portalMatch && method === "GET") {
       return getClientPortal(env, portalMatch[1]);
     }
+    const portalFoldersMatch = path.match(/^\/api\/portal\/([^/]+)\/folders$/);
+    if (portalFoldersMatch && method === "POST") {
+      return portalCreateFolder(request, env, portalFoldersMatch[1]);
+    }
+    const portalFolderMatch = path.match(/^\/api\/portal\/([^/]+)\/folders\/([^/]+)$/);
+    if (portalFolderMatch && method === "PATCH") {
+      return portalUpdateFolder(request, env, portalFolderMatch[1], portalFolderMatch[2]);
+    }
+    if (portalFolderMatch && method === "DELETE") {
+      return portalDeleteFolder(env, portalFolderMatch[1], portalFolderMatch[2]);
+    }
+    const portalVideoMatch = path.match(/^\/api\/portal\/([^/]+)\/videos\/([^/]+)$/);
+    if (portalVideoMatch && method === "PATCH") {
+      return portalMoveVideo(request, env, portalVideoMatch[1], portalVideoMatch[2]);
+    }
 
     if (!(await isAuthed(request, env))) {
       return errorResponse("Unauthorized", 401);
@@ -672,15 +923,22 @@ export default {
     if (clientMatch && method === "PATCH") return updateClient(request, env, clientMatch[1]);
     if (clientMatch && method === "DELETE") return deleteClient(env, clientMatch[1]);
 
-    const clientProjectsMatch = path.match(/^\/api\/clients\/([^/]+)\/projects$/);
-    if (clientProjectsMatch && method === "GET") return listProjects(env, clientProjectsMatch[1]);
-    if (clientProjectsMatch && method === "POST")
-      return createProject(request, env, clientProjectsMatch[1]);
+    const clientFoldersMatch = path.match(/^\/api\/clients\/([^/]+)\/folders$/);
+    if (clientFoldersMatch && method === "GET") return listFolders(env, clientFoldersMatch[1]);
+    if (clientFoldersMatch && method === "POST") return createFolder(request, env, clientFoldersMatch[1]);
 
-    const projectMatch = path.match(/^\/api\/projects\/([^/]+)$/);
-    if (projectMatch && method === "GET") return getProject(env, projectMatch[1]);
-    if (projectMatch && method === "PATCH") return updateProject(request, env, projectMatch[1]);
-    if (projectMatch && method === "DELETE") return deleteProject(env, projectMatch[1]);
+    const folderMatch = path.match(/^\/api\/folders\/([^/]+)$/);
+    if (folderMatch && method === "PATCH") return updateFolder(request, env, folderMatch[1]);
+    if (folderMatch && method === "DELETE") return deleteFolder(env, folderMatch[1]);
+
+    const clientVideosMatch = path.match(/^\/api\/clients\/([^/]+)\/videos$/);
+    if (clientVideosMatch && method === "GET") return listVideos(env, clientVideosMatch[1]);
+    if (clientVideosMatch && method === "POST") return createVideo(request, env, clientVideosMatch[1]);
+
+    const videoMatch = path.match(/^\/api\/videos\/([^/]+)$/);
+    if (videoMatch && method === "GET") return getVideo(env, videoMatch[1]);
+    if (videoMatch && method === "PATCH") return updateVideo(request, env, videoMatch[1]);
+    if (videoMatch && method === "DELETE") return deleteVideo(env, videoMatch[1]);
 
     return errorResponse("Not found", 404);
   },

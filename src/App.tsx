@@ -2,7 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import Dashboard from "./pages/Dashboard";
 import ClientDetail from "./pages/ClientDetail";
-import ProjectDetail from "./pages/ProjectDetail";
+import VideoDetail from "./pages/VideoDetail";
 import SharePage from "./pages/SharePage";
 import ClientPortal from "./pages/ClientPortal";
 import Login from "./pages/Login";
@@ -50,7 +50,7 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/clients/:clientId" element={<ClientDetail />} />
-                  <Route path="/clients/:clientId/projects/:projectId" element={<ProjectDetail />} />
+                  <Route path="/clients/:clientId/videos/:videoId" element={<VideoDetail />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </div>

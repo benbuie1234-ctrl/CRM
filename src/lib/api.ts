@@ -1,11 +1,9 @@
-export type ProjectType = "project" | "reel";
-
-export type Project = {
+export type Video = {
   id: string;
   client_id: string;
+  folder_id: string | null;
   name: string;
   status: "in_progress" | "review" | "delivered";
-  type: ProjectType;
   footage_link: string | null;
   reference_links: string | null;
   instructions: string | null;
@@ -17,6 +15,14 @@ export type Project = {
   share_slug: string;
   created_at: string;
   updated_at: string;
+};
+
+export type Folder = {
+  id: string;
+  client_id: string;
+  parent_folder_id: string | null;
+  name: string;
+  created_at: string;
 };
 
 export type BillingType = "per_project" | "retainer";
@@ -35,18 +41,20 @@ export type Client = {
   amount_owed?: number;
 };
 
-export type PortalProject = Pick<
-  Project,
-  "id" | "name" | "status" | "footage_link" | "instructions" | "export_link" | "share_slug" | "created_date" | "completed_date"
+export type PortalVideo = Pick<
+  Video,
+  "id" | "folder_id" | "name" | "status" | "footage_link" | "instructions" | "export_link" | "share_slug" | "created_date" | "completed_date"
 >;
+
+export type PortalFolder = Pick<Folder, "id" | "parent_folder_id" | "name">;
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 export type ChatAction = {
   ok: boolean;
   client?: Client;
-  project?: Project;
-  deleted?: string;
+  folder?: Folder;
+  video?: Video;
   error?: string;
 };
 
@@ -69,6 +77,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export { UnauthorizedError };
 
+export const DATA_CHANGED_EVENT = "crm:data-changed";
+
+function notifyDataChanged() {
+  window.dispatchEvent(new Event(DATA_CHANGED_EVENT));
+}
+
 export const api = {
   login: (passphrase: string) =>
     request<{ ok: true }>("/login", { method: "POST", body: JSON.stringify({ passphrase }) }),
@@ -76,29 +90,79 @@ export const api = {
 
   listClients: () => request<Client[]>("/clients"),
   getClient: (id: string) => request<Client>(`/clients/${id}`),
-  createClient: (data: Partial<Client>) =>
-    request<Client>("/clients", { method: "POST", body: JSON.stringify(data) }),
-  updateClient: (id: string, data: Partial<Client>) =>
-    request<Client>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  deleteClient: (id: string) => request<void>(`/clients/${id}`, { method: "DELETE" }),
+  createClient: async (data: Partial<Client>) => {
+    const c = await request<Client>("/clients", { method: "POST", body: JSON.stringify(data) });
+    notifyDataChanged();
+    return c;
+  },
+  updateClient: async (id: string, data: Partial<Client>) => {
+    const c = await request<Client>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    notifyDataChanged();
+    return c;
+  },
+  deleteClient: async (id: string) => {
+    await request<void>(`/clients/${id}`, { method: "DELETE" });
+    notifyDataChanged();
+  },
 
-  listProjects: (clientId: string) => request<Project[]>(`/clients/${clientId}/projects`),
-  getProject: (id: string) => request<Project>(`/projects/${id}`),
-  createProject: (clientId: string, data: Partial<Project>) =>
-    request<Project>(`/clients/${clientId}/projects`, { method: "POST", body: JSON.stringify(data) }),
-  updateProject: (id: string, data: Partial<Project>) =>
-    request<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: "DELETE" }),
+  listFolders: (clientId: string) => request<Folder[]>(`/clients/${clientId}/folders`),
+  createFolder: async (clientId: string, data: { name: string; parent_folder_id?: string | null }) => {
+    const f = await request<Folder>(`/clients/${clientId}/folders`, { method: "POST", body: JSON.stringify(data) });
+    notifyDataChanged();
+    return f;
+  },
+  updateFolder: async (id: string, data: { name?: string; parent_folder_id?: string | null }) => {
+    const f = await request<Folder>(`/folders/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    notifyDataChanged();
+    return f;
+  },
+  deleteFolder: async (id: string) => {
+    await request<void>(`/folders/${id}`, { method: "DELETE" });
+    notifyDataChanged();
+  },
+
+  listVideos: (clientId: string) => request<Video[]>(`/clients/${clientId}/videos`),
+  getVideo: (id: string) => request<Video>(`/videos/${id}`),
+  createVideo: async (clientId: string, data: Partial<Video>) => {
+    const v = await request<Video>(`/clients/${clientId}/videos`, { method: "POST", body: JSON.stringify(data) });
+    notifyDataChanged();
+    return v;
+  },
+  updateVideo: async (id: string, data: Partial<Video>) => {
+    const v = await request<Video>(`/videos/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    notifyDataChanged();
+    return v;
+  },
+  deleteVideo: async (id: string) => {
+    await request<void>(`/videos/${id}`, { method: "DELETE" });
+    notifyDataChanged();
+  },
 
   getShared: (slug: string) =>
-    request<{ project: Project; client: { name: string } }>(`/share/${slug}`),
+    request<{ video: Video; client: { name: string } }>(`/share/${slug}`),
 
   getClientPortal: (slug: string) =>
-    request<{ client: { id: string; name: string }; projects: PortalProject[] }>(`/portal/${slug}`),
+    request<{ client: { id: string; name: string }; folders: PortalFolder[]; videos: PortalVideo[] }>(
+      `/portal/${slug}`
+    ),
+  portalCreateFolder: (slug: string, data: { name: string; parent_folder_id?: string | null }) =>
+    request<PortalFolder>(`/portal/${slug}/folders`, { method: "POST", body: JSON.stringify(data) }),
+  portalUpdateFolder: (slug: string, folderId: string, data: { name?: string; parent_folder_id?: string | null }) =>
+    request<PortalFolder>(`/portal/${slug}/folders/${folderId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  portalDeleteFolder: (slug: string, folderId: string) =>
+    request<void>(`/portal/${slug}/folders/${folderId}`, { method: "DELETE" }),
+  portalMoveVideo: (slug: string, videoId: string, folder_id: string | null) =>
+    request<PortalVideo>(`/portal/${slug}/videos/${videoId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ folder_id }),
+    }),
 
-  chat: (messages: ChatMessage[]) =>
-    request<{ reply: string; action?: ChatAction }>("/ai/chat", {
+  chat: async (messages: ChatMessage[]) => {
+    const res = await request<{ reply: string; action?: ChatAction }>("/ai/chat", {
       method: "POST",
       body: JSON.stringify({ messages }),
-    }),
+    });
+    if (res.action?.ok) notifyDataChanged();
+    return res;
+  },
 };

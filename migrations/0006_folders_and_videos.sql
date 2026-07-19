@@ -1,14 +1,7 @@
-CREATE TABLE IF NOT EXISTS clients (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  email TEXT,
-  drive_link TEXT,
-  notes TEXT,
-  billing_type TEXT NOT NULL DEFAULT 'per_project',
-  retainer_amount REAL,
-  share_slug TEXT UNIQUE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+-- Full reset: replaces the projects/reels concept with a nested folder + video
+-- file-browser model. Destructive by request — wipes existing clients/projects.
+DROP TABLE IF EXISTS projects;
+DELETE FROM clients;
 
 CREATE TABLE IF NOT EXISTS folders (
   id TEXT PRIMARY KEY,
@@ -43,4 +36,3 @@ CREATE INDEX IF NOT EXISTS idx_videos_client ON videos(client_id);
 CREATE INDEX IF NOT EXISTS idx_videos_folder ON videos(folder_id);
 CREATE INDEX IF NOT EXISTS idx_videos_share_slug ON videos(share_slug);
 CREATE INDEX IF NOT EXISTS idx_videos_created_date ON videos(created_date);
-CREATE INDEX IF NOT EXISTS idx_clients_share_slug ON clients(share_slug);
