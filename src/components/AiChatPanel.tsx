@@ -3,8 +3,9 @@ import { Link } from "react-router-dom";
 import { api, ChatAction, ChatMessage } from "../lib/api";
 
 const WELCOME =
-  "Hey — I can chat, summarize a client's message, or actually build a project card for you. Try something like:\n\n" +
-  '"Create a project for Acme Fitness called Q3 Promo, $500, here\'s their message: ..."';
+  "Hey — I can do pretty much anything on this site: add/edit/delete clients or projects, mark things paid, log a " +
+  "reel, summarize a client's message into instructions, or just answer questions about your data. Try:\n\n" +
+  '"Create a client named Damien May" or "Mark Q3 Promo as delivered" or "Who owes me money?"';
 
 export default function AiChatPanel() {
   const [open, setOpen] = useState(true);
@@ -84,7 +85,11 @@ export default function AiChatPanel() {
             </div>
             {actions[i] && (
               <div className="mt-1.5">
-                {actions[i]!.ok && actions[i]!.project ? (
+                {actions[i]!.ok && actions[i]!.deleted ? (
+                  <span className="inline-block rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300">
+                    🗑 Deleted "{actions[i]!.deleted}"
+                  </span>
+                ) : actions[i]!.ok && actions[i]!.project ? (
                   <Link
                     to={`/clients/${actions[i]!.project!.client_id}/projects/${actions[i]!.project!.id}`}
                     className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20"

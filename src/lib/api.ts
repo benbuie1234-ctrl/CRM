@@ -46,6 +46,7 @@ export type ChatAction = {
   ok: boolean;
   client?: Client;
   project?: Project;
+  deleted?: string;
   error?: string;
 };
 

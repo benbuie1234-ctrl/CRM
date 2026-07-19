@@ -354,13 +354,23 @@ async function findProjectByName(
 }
 
 type ChatAction = {
-  type: "create_client" | "create_project" | "update_project";
+  type:
+    | "create_client"
+    | "update_client"
+    | "delete_client"
+    | "create_project"
+    | "update_project"
+    | "delete_project";
   client_name?: string;
+  new_client_name?: string;
   email?: string;
   drive_link?: string;
+  notes?: string;
   billing_type?: string;
   retainer_amount?: number;
   project_name?: string;
+  new_project_name?: string;
+  project_type?: string;
   price?: number;
   paid?: boolean;
   status?: string;
@@ -368,10 +378,12 @@ type ChatAction = {
   footage_link?: string;
   export_link?: string;
   reference_links?: string;
+  created_date?: string;
+  completed_date?: string;
 };
 
 type ChatActionResult =
-  | { ok: true; client?: any; project?: any }
+  | { ok: true; client?: any; project?: any; deleted?: string }
   | { ok: false; error: string };
 
 async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionResult> {
@@ -399,36 +411,82 @@ async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionRe
   }
   if (!client) return { ok: false, error: `No client found matching "${action.client_name}"` };
 
+  if (action.type === "update_client") {
+    const ex = (await env.DB.prepare(`SELECT * FROM clients WHERE id = ?`).bind(client.id).first()) as any;
+    const name = action.new_client_name ?? ex.name;
+    const email = action.email !== undefined ? action.email : ex.email;
+    const drive_link = action.drive_link !== undefined ? action.drive_link : ex.drive_link;
+    const notes = action.notes !== undefined ? action.notes : ex.notes;
+    const billing_type =
+      action.billing_type && VALID_BILLING_TYPES.includes(action.billing_type) ? action.billing_type : ex.billing_type;
+    const retainer_amount = action.retainer_amount !== undefined ? action.retainer_amount : ex.retainer_amount;
+
+    await env.DB.prepare(
+      `UPDATE clients SET name = ?, email = ?, drive_link = ?, notes = ?, billing_type = ?, retainer_amount = ? WHERE id = ?`
+    )
+      .bind(name, email, drive_link, notes, billing_type, billing_type === "retainer" ? retainer_amount : null, client.id)
+      .run();
+
+    const updated = await env.DB.prepare(`SELECT * FROM clients WHERE id = ?`).bind(client.id).first();
+    return { ok: true, client: updated };
+  }
+
+  if (action.type === "delete_client") {
+    await env.DB.prepare(`DELETE FROM clients WHERE id = ?`).bind(client.id).run();
+    return { ok: true, deleted: client.name };
+  }
+
   if (action.type === "create_project") {
     if (!action.project_name) return { ok: false, error: "No project name given" };
     const project = await insertProjectRow(env, client.id, {
       name: action.project_name,
       status: action.status,
+      type: action.project_type,
       price: action.price,
       paid: action.paid,
       instructions: action.instructions,
       footage_link: action.footage_link,
       export_link: action.export_link,
       reference_links: action.reference_links,
+      created_date: action.created_date,
+      completed_date: action.completed_date,
     });
     return { ok: true, project, client };
   }
 
-  if (action.type === "update_project") {
+  if (action.type === "update_project" || action.type === "delete_project") {
     if (!action.project_name) return { ok: false, error: "No project name given" };
     const match = await findProjectByName(env, client.id, action.project_name);
     if (match === "ambiguous") return { ok: false, error: `Multiple projects match "${action.project_name}"` };
     if (!match) return { ok: false, error: `No project found matching "${action.project_name}" for ${client.name}` };
 
+    if (action.type === "delete_project") {
+      await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(match.id).run();
+      return { ok: true, deleted: action.project_name };
+    }
+
     const fields: string[] = [];
     const values: unknown[] = [];
+    if (action.new_project_name !== undefined) { fields.push("name = ?"); values.push(action.new_project_name); }
     if (action.price !== undefined) { fields.push("price = ?"); values.push(action.price); }
     if (action.paid !== undefined) { fields.push("paid = ?"); values.push(action.paid ? 1 : 0); }
     if (action.status !== undefined && VALID_STATUSES.includes(action.status)) { fields.push("status = ?"); values.push(action.status); }
+    if (action.project_type !== undefined && VALID_PROJECT_TYPES.includes(action.project_type)) { fields.push("type = ?"); values.push(action.project_type); }
     if (action.instructions !== undefined) { fields.push("instructions = ?"); values.push(action.instructions); }
     if (action.footage_link !== undefined) { fields.push("footage_link = ?"); values.push(action.footage_link); }
     if (action.export_link !== undefined) { fields.push("export_link = ?"); values.push(action.export_link); }
     if (action.reference_links !== undefined) { fields.push("reference_links = ?"); values.push(action.reference_links); }
+    if (action.created_date !== undefined) { fields.push("created_date = ?"); values.push(action.created_date); }
+    if (action.completed_date !== undefined) {
+      fields.push("completed_date = ?");
+      values.push(action.completed_date);
+    } else if (action.status === "delivered") {
+      const ex = (await env.DB.prepare(`SELECT completed_date FROM projects WHERE id = ?`).bind(match.id).first()) as any;
+      if (!ex.completed_date) {
+        fields.push("completed_date = ?");
+        values.push(new Date().toISOString().slice(0, 10));
+      }
+    }
 
     if (fields.length > 0) {
       fields.push("updated_at = datetime('now')");
@@ -436,7 +494,7 @@ async function runChatAction(env: Env, action: ChatAction): Promise<ChatActionRe
       await env.DB.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ?`).bind(...values).run();
     }
     const project = await env.DB.prepare(`SELECT * FROM projects WHERE id = ?`).bind(match.id).first();
-    return { ok: true, project };
+    return { ok: true, project, client };
   }
 
   return { ok: false, error: "Unknown action type" };
@@ -447,32 +505,72 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
   const history = Array.isArray(body.messages) ? body.messages : [];
   if (history.length === 0) return errorResponse("No messages");
 
-  const { results: clientRows } = await env.DB.prepare(`SELECT name FROM clients ORDER BY name`).all();
-  const clientNames = (clientRows as any[]).map((c) => c.name);
+  const { results: clientRows } = await env.DB.prepare(
+    `SELECT c.name, c.email, c.billing_type, c.retainer_amount,
+       COALESCE(SUM(CASE WHEN p.paid = 0 THEN p.price ELSE 0 END), 0) as amount_owed,
+       COUNT(p.id) as project_count
+     FROM clients c LEFT JOIN projects p ON p.client_id = c.id
+     GROUP BY c.id ORDER BY c.name`
+  ).all();
+  const { results: projectRows } = await env.DB.prepare(
+    `SELECT c.name as client_name, p.name as project_name, p.type, p.status, p.price, p.paid,
+       p.created_date, p.completed_date
+     FROM projects p JOIN clients c ON c.id = p.client_id
+     ORDER BY c.name, p.created_date DESC`
+  ).all();
   const today = new Date().toISOString().slice(0, 10);
 
+  const clientSummary = (clientRows as any[])
+    .map(
+      (c) =>
+        `- ${c.name}${c.email ? ` (${c.email})` : ""}: ${c.project_count} project(s), ` +
+        (c.billing_type === "retainer"
+          ? `retainer $${c.retainer_amount ?? 0}/mo`
+          : `owes $${c.amount_owed} from unpaid per-video work`)
+    )
+    .join("\n");
+  const projectSummary = (projectRows as any[])
+    .map(
+      (p) =>
+        `- ${p.client_name} / "${p.project_name}" (${p.type}): status=${p.status}, price=${p.price ?? "unset"}, ` +
+        `paid=${p.paid ? "yes" : "no"}, created=${p.created_date}, completed=${p.completed_date ?? "not yet"}`
+    )
+    .join("\n");
+
   const systemPrompt =
-    "You are the built-in assistant for a freelance video editor's client-management app. You can chat normally, " +
-    "summarize messy client messages into clean editing briefs, and — most importantly — directly create or update " +
-    `clients and project cards in the database when asked. Today's date is ${today}. ` +
-    (clientNames.length ? `Existing clients: ${clientNames.join(", ")}. ` : "There are no clients in the system yet. ") +
-    "\n\nCRITICAL RULE: do exactly the one thing the user asked, using only the information they actually gave you. " +
+    "You are the built-in assistant for a freelance video editor's client-management app (a CRM). You can chat, " +
+    "summarize messy client messages into clean editing briefs, answer questions about the data below, and — most " +
+    "importantly — directly perform ANY action the app itself supports: creating, editing, or deleting clients and " +
+    `project/reel cards. Today's date is ${today}.\n\n` +
+    "CURRENT CLIENTS:\n" +
+    (clientSummary || "(none yet)") +
+    "\n\nCURRENT PROJECTS:\n" +
+    (projectSummary || "(none yet)") +
+    "\n\nUse the data above to answer questions directly (e.g. who owes money, a client's status, how many projects " +
+    "someone has) without needing an action block — you already have everything shown above, don't say you can't " +
+    "look it up.\n\n" +
+    "CRITICAL RULE: do exactly the one thing the user asked, using only the information they actually gave you. " +
     "Never ask a clarifying question for information the user didn't mention and didn't imply is coming — price, " +
     "instructions, footage links, email, etc. are all OPTIONAL and can be added later. Only ask a question if a " +
     "TRULY REQUIRED field is missing: a name for the client/project being created, or which existing client/project " +
     "an update applies to when it's genuinely ambiguous. If the user just says 'add a new client named X', immediately " +
-    "emit the action to create it — do not ask what project they want, do not ask for email or billing info. If they " +
-    "later say 'the project I'm working on is Y', that is a SEPARATE request — if X doesn't exist as a client yet, " +
-    "just create the project for client_name X anyway (the system will auto-create the client too), do not stall to " +
-    "ask permission.\n\n" +
+    "emit the action to create it. If they mention a project for a client that doesn't exist yet, just create the " +
+    "client too as part of create_project — don't stall to ask permission.\n\n" +
+    "EXCEPTION — deletions are the one case where you should pause: before emitting delete_client or delete_project, " +
+    "confirm in plain text once ('Delete Q3 Promo for Acme Fitness — you sure? This can't be undone.') and wait for " +
+    "the user to say yes/confirm/do it in their next message before actually emitting the action. Don't ask twice.\n\n" +
     "After acting, write ONE short natural-language confirmation sentence, then end your reply with a fenced code " +
-    "block labeled action containing exactly ONE JSON object. Examples:\n" +
-    '```action\n{"type":"create_client","client_name":"Damien May"}\n```\n' +
-    '```action\n{"type":"create_project","client_name":"Acme Fitness","project_name":"Q3 Promo","price":500,"instructions":"..."}\n```\n' +
-    '```action\n{"type":"update_project","client_name":"Acme Fitness","project_name":"Q3 Promo","paid":true}\n```\n' +
-    "Only include fields the user actually gave you — omit the rest entirely, don't guess or invent values. Valid " +
-    "status values: in_progress, review, delivered. Never emit more than one action block per reply. If the request " +
-    "is just conversation (no create/update intent), reply normally with no action block.";
+    "block labeled action containing exactly ONE JSON object. Available action types and their fields (omit any " +
+    "field you don't have a value for):\n" +
+    '```action\n{"type":"create_client","client_name":"Damien May","email":"...","drive_link":"...","billing_type":"per_project|retainer","retainer_amount":2000}\n```\n' +
+    '```action\n{"type":"update_client","client_name":"Damien May","new_client_name":"...","email":"...","drive_link":"...","notes":"...","billing_type":"...","retainer_amount":2000}\n```\n' +
+    '```action\n{"type":"delete_client","client_name":"Damien May"}\n```\n' +
+    '```action\n{"type":"create_project","client_name":"Acme Fitness","project_name":"Q3 Promo","project_type":"project|reel","price":500,"paid":false,"status":"in_progress|review|delivered","instructions":"...","footage_link":"...","export_link":"...","reference_links":"...","created_date":"YYYY-MM-DD","completed_date":"YYYY-MM-DD"}\n```\n' +
+    '```action\n{"type":"update_project","client_name":"Acme Fitness","project_name":"Q3 Promo","new_project_name":"...","paid":true,"price":500,"status":"delivered", "...(any create_project field)"}\n```\n' +
+    '```action\n{"type":"delete_project","client_name":"Acme Fitness","project_name":"Q3 Promo"}\n```\n' +
+    "Only include fields the user actually gave you — never guess or invent values. Never emit more than one action " +
+    "block per reply. If the request is just conversation or a question you can answer from the data above, reply " +
+    "normally with no action block.";
 
   const messages = [{ role: "system", content: systemPrompt }, ...history];
 
@@ -486,13 +584,16 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
 
   const raw = result.response ?? "";
   const actionMatch = raw.match(/```action\s*([\s\S]*?)```/);
+  const actionBody = actionMatch ? actionMatch[1].trim() : "";
   let reply = actionMatch ? raw.slice(0, actionMatch.index).trim() : raw.trim();
   let actionResult: (ChatActionResult & { error?: string }) | undefined;
 
-  if (actionMatch) {
+  if (actionBody) {
     try {
-      const action = JSON.parse(actionMatch[1].trim()) as ChatAction;
-      actionResult = await runChatAction(env, action);
+      const action = JSON.parse(actionBody) as ChatAction;
+      if (action && action.type) {
+        actionResult = await runChatAction(env, action);
+      }
     } catch {
       actionResult = { ok: false, error: "Couldn't understand the action the AI produced — try rephrasing." };
     }
