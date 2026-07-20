@@ -5,6 +5,7 @@ import Modal from "../components/Modal";
 import FolderPicker from "../components/FolderPicker";
 import StatusBadge from "../components/StatusBadge";
 import { formatMoney } from "../lib/format";
+import { readDragPayload, setDragPayload } from "../lib/dnd";
 
 export default function ClientDetail() {
   const { clientId } = useParams<{ clientId: string }>();
@@ -22,6 +23,8 @@ export default function ClientDetail() {
   const [movingFolder, setMovingFolder] = useState<Folder | null>(null);
   const [movingVideo, setMovingVideo] = useState<Video | null>(null);
   const [copiedPortal, setCopiedPortal] = useState(false);
+  const [dragOverId, setDragOverId] = useState<string | "root" | null>(null);
+  const [dragError, setDragError] = useState("");
 
   function refresh() {
     if (!clientId) return;
@@ -71,6 +74,27 @@ export default function ClientDetail() {
     if (!confirm(`Delete "${folder.name}"? Anything inside moves up a level — nothing gets deleted.`)) return;
     await api.deleteFolder(folder.id);
     refresh();
+  }
+
+  async function handleDropOn(targetFolderId: string | null, e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverId(null);
+    const payload = readDragPayload(e);
+    if (!payload) return;
+    if (payload.kind === "folder" && payload.id === targetFolderId) return;
+    setDragError("");
+    try {
+      if (payload.kind === "folder") {
+        await api.updateFolder(payload.id, { parent_folder_id: targetFolderId });
+      } else {
+        await api.updateVideo(payload.id, { folder_id: targetFolderId });
+      }
+      refresh();
+    } catch (err) {
+      setDragError(err instanceof Error ? err.message : "Couldn't move that there");
+      setTimeout(() => setDragError(""), 3000);
+    }
   }
 
   if (loading || !client || !clientId) {
@@ -160,9 +184,15 @@ export default function ClientDetail() {
         <div className="flex flex-wrap items-center gap-1 text-sm">
           <button
             onClick={() => setCurrentFolderId(null)}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOverId("root");
+            }}
+            onDragLeave={() => setDragOverId((prev) => (prev === "root" ? null : prev))}
+            onDrop={(e) => handleDropOn(null, e)}
             className={`rounded px-2 py-1 ${
               currentFolderId === null ? "font-semibold text-slate-100" : "text-slate-400 hover:text-slate-200"
-            }`}
+            } ${dragOverId === "root" ? "bg-brand-500/20 ring-1 ring-brand-500" : ""}`}
           >
             🏠 {client.name}
           </button>
@@ -171,11 +201,17 @@ export default function ClientDetail() {
               <span className="text-slate-600">/</span>
               <button
                 onClick={() => setCurrentFolderId(f.id)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverId(f.id);
+                }}
+                onDragLeave={() => setDragOverId((prev) => (prev === f.id ? null : prev))}
+                onDrop={(e) => handleDropOn(f.id, e)}
                 className={`rounded px-2 py-1 ${
                   i === breadcrumb.length - 1
                     ? "font-semibold text-slate-100"
                     : "text-slate-400 hover:text-slate-200"
-                }`}
+                } ${dragOverId === f.id ? "bg-brand-500/20 ring-1 ring-brand-500" : ""}`}
               >
                 {f.name}
               </button>
@@ -198,16 +234,44 @@ export default function ClientDetail() {
         </div>
       </div>
 
+      {dragError && (
+        <p className="mb-3 rounded-lg border border-red-900 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+          {dragError}
+        </p>
+      )}
+
       {visibleFolders.length === 0 && visibleVideos.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-700 p-12 text-center text-slate-400">
-          Empty folder. Add a video or make a subfolder.
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOverId(currentFolderId ?? "root");
+          }}
+          onDragLeave={() => setDragOverId(null)}
+          onDrop={(e) => handleDropOn(currentFolderId, e)}
+          className={`rounded-xl border border-dashed p-12 text-center text-slate-400 ${
+            dragOverId === (currentFolderId ?? "root") && dragOverId !== null
+              ? "border-brand-500 bg-brand-500/5"
+              : "border-slate-700"
+          }`}
+        >
+          Empty folder. Add a video or make a subfolder — or drag one in.
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {visibleFolders.map((f) => (
             <div
               key={f.id}
-              className="group relative rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-sm transition hover:border-brand-500"
+              draggable
+              onDragStart={(e) => setDragPayload(e, { kind: "folder", id: f.id })}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOverId(f.id);
+              }}
+              onDragLeave={() => setDragOverId((prev) => (prev === f.id ? null : prev))}
+              onDrop={(e) => handleDropOn(f.id, e)}
+              className={`group relative cursor-grab rounded-xl border bg-slate-900 p-4 shadow-sm transition active:cursor-grabbing ${
+                dragOverId === f.id ? "border-brand-500 bg-brand-500/10 ring-1 ring-brand-500" : "border-slate-800 hover:border-brand-500"
+              }`}
             >
               <button onClick={() => setCurrentFolderId(f.id)} className="block w-full text-left">
                 <div className="mb-2 text-3xl">📁</div>
@@ -241,7 +305,9 @@ export default function ClientDetail() {
           {visibleVideos.map((v) => (
             <div
               key={v.id}
-              className="rounded-xl border border-slate-800 bg-slate-900 shadow-sm transition hover:border-brand-500 hover:shadow-md"
+              draggable
+              onDragStart={(e) => setDragPayload(e, { kind: "video", id: v.id })}
+              className="cursor-grab rounded-xl border border-slate-800 bg-slate-900 shadow-sm transition hover:border-brand-500 hover:shadow-md active:cursor-grabbing"
             >
               <Link to={`/clients/${clientId}/videos/${v.id}`} className="block p-4 pb-2">
                 <div className="mb-2 text-3xl">🎬</div>

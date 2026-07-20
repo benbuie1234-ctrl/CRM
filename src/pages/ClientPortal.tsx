@@ -4,6 +4,7 @@ import { api, PortalFolder, PortalVideo } from "../lib/api";
 import StatusBadge from "../components/StatusBadge";
 import Modal from "../components/Modal";
 import FolderPicker from "../components/FolderPicker";
+import { readDragPayload, setDragPayload } from "../lib/dnd";
 
 export default function ClientPortal() {
   const { slug } = useParams<{ slug: string }>();
@@ -19,6 +20,8 @@ export default function ClientPortal() {
   const [movingFolder, setMovingFolder] = useState<PortalFolder | null>(null);
   const [movingVideo, setMovingVideo] = useState<PortalVideo | null>(null);
   const [viewingVideo, setViewingVideo] = useState<PortalVideo | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | "root" | null>(null);
+  const [dragError, setDragError] = useState("");
 
   function refresh() {
     if (!slug) return;
@@ -69,6 +72,27 @@ export default function ClientPortal() {
     refresh();
   }
 
+  async function handleDropOn(targetFolderId: string | null, e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverId(null);
+    const payload = readDragPayload(e);
+    if (!payload) return;
+    if (payload.kind === "folder" && payload.id === targetFolderId) return;
+    setDragError("");
+    try {
+      if (payload.kind === "folder") {
+        await api.portalUpdateFolder(slug!, payload.id, { parent_folder_id: targetFolderId });
+      } else {
+        await api.portalMoveVideo(slug!, payload.id, targetFolderId);
+      }
+      refresh();
+    } catch (err) {
+      setDragError(err instanceof Error ? err.message : "Couldn't move that there");
+      setTimeout(() => setDragError(""), 3000);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 px-6 py-10">
       <div className="mx-auto max-w-4xl">
@@ -79,9 +103,15 @@ export default function ClientPortal() {
           <div className="flex flex-wrap items-center gap-1 text-sm">
             <button
               onClick={() => setCurrentFolderId(null)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOverId("root");
+              }}
+              onDragLeave={() => setDragOverId((prev) => (prev === "root" ? null : prev))}
+              onDrop={(e) => handleDropOn(null, e)}
               className={`rounded px-2 py-1 ${
                 currentFolderId === null ? "font-semibold text-slate-100" : "text-slate-400 hover:text-slate-200"
-              }`}
+              } ${dragOverId === "root" ? "bg-brand-500/20 ring-1 ring-brand-500" : ""}`}
             >
               🏠 Home
             </button>
@@ -90,11 +120,17 @@ export default function ClientPortal() {
                 <span className="text-slate-600">/</span>
                 <button
                   onClick={() => setCurrentFolderId(f.id)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOverId(f.id);
+                  }}
+                  onDragLeave={() => setDragOverId((prev) => (prev === f.id ? null : prev))}
+                  onDrop={(e) => handleDropOn(f.id, e)}
                   className={`rounded px-2 py-1 ${
                     i === breadcrumb.length - 1
                       ? "font-semibold text-slate-100"
                       : "text-slate-400 hover:text-slate-200"
-                  }`}
+                  } ${dragOverId === f.id ? "bg-brand-500/20 ring-1 ring-brand-500" : ""}`}
                 >
                   {f.name}
                 </button>
@@ -109,16 +145,44 @@ export default function ClientPortal() {
           </button>
         </div>
 
+        {dragError && (
+          <p className="mb-3 rounded-lg border border-red-900 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+            {dragError}
+          </p>
+        )}
+
         {visibleFolders.length === 0 && visibleVideos.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-700 p-12 text-center text-slate-400">
-            Nothing here yet.
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOverId(currentFolderId ?? "root");
+            }}
+            onDragLeave={() => setDragOverId(null)}
+            onDrop={(e) => handleDropOn(currentFolderId, e)}
+            className={`rounded-xl border border-dashed p-12 text-center text-slate-400 ${
+              dragOverId === (currentFolderId ?? "root") && dragOverId !== null
+                ? "border-brand-500 bg-brand-500/5"
+                : "border-slate-700"
+            }`}
+          >
+            Nothing here yet — drag something in.
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {visibleFolders.map((f) => (
               <div
                 key={f.id}
-                className="group relative rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-sm transition hover:border-brand-500"
+                draggable
+                onDragStart={(e) => setDragPayload(e, { kind: "folder", id: f.id })}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverId(f.id);
+                }}
+                onDragLeave={() => setDragOverId((prev) => (prev === f.id ? null : prev))}
+                onDrop={(e) => handleDropOn(f.id, e)}
+                className={`group relative cursor-grab rounded-xl border bg-slate-900 p-4 shadow-sm transition active:cursor-grabbing ${
+                  dragOverId === f.id ? "border-brand-500 bg-brand-500/10 ring-1 ring-brand-500" : "border-slate-800 hover:border-brand-500"
+                }`}
               >
                 <button onClick={() => setCurrentFolderId(f.id)} className="block w-full text-left">
                   <div className="mb-2 text-3xl">📁</div>
@@ -144,7 +208,9 @@ export default function ClientPortal() {
             {visibleVideos.map((v) => (
               <div
                 key={v.id}
-                className="rounded-xl border border-slate-800 bg-slate-900 shadow-sm transition hover:border-brand-500"
+                draggable
+                onDragStart={(e) => setDragPayload(e, { kind: "video", id: v.id })}
+                className="cursor-grab rounded-xl border border-slate-800 bg-slate-900 shadow-sm transition hover:border-brand-500 active:cursor-grabbing"
               >
                 <button onClick={() => setViewingVideo(v)} className="block w-full p-4 pb-2 text-left">
                   <div className="mb-2 text-3xl">🎬</div>
