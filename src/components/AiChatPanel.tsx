@@ -2,13 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ChatAction, ChatMessage } from "../lib/api";
 
-const WELCOME =
+const ADMIN_WELCOME =
   "Hey — I can do almost anything on this site: add/edit clients, make folders, add/edit videos, move things around, " +
   "mark videos paid, summarize a client's message into instructions, or just answer questions about your data. " +
   "The one thing I can't do is delete anything — that's on you. Try:\n\n" +
   '"Create a client named Damien May" or "Mark Q3 Promo as delivered" or "Who owes me money?"';
 
-export default function AiChatPanel() {
+const PORTAL_WELCOME =
+  "Hi — I can help you organize your videos: make folders, rename or move them, move a video into a folder, or " +
+  "update a video's status. I can't rename, edit, or delete a video itself, and I can't delete folders — that's " +
+  "still on you via the buttons. Try:\n\n" +
+  '"Make a folder called Approved" or "Move Summer Promo into Approved" or "Mark Summer Promo as posted"';
+
+export default function AiChatPanel({ portalSlug }: { portalSlug?: string }) {
   const [open, setOpen] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -16,6 +22,7 @@ export default function AiChatPanel() {
   const [actions, setActions] = useState<Record<number, ChatAction | undefined>>({});
   const [error, setError] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isPortal = Boolean(portalSlug);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -30,7 +37,7 @@ export default function AiChatPanel() {
     setInput("");
     setSending(true);
     try {
-      const res = await api.chat(next);
+      const res = isPortal ? await api.portalChat(portalSlug!, next) : await api.chat(next);
       const idx = next.length;
       setMessages([...next, { role: "assistant", content: res.reply }]);
       if (res.action) setActions((prev) => ({ ...prev, [idx]: res.action }));
@@ -73,7 +80,7 @@ export default function AiChatPanel() {
 
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {messages.length === 0 && (
-          <p className="whitespace-pre-wrap text-sm text-slate-400">{WELCOME}</p>
+          <p className="whitespace-pre-wrap text-sm text-slate-400">{isPortal ? PORTAL_WELCOME : ADMIN_WELCOME}</p>
         )}
         {messages.map((m, i) => (
           <div key={i} className={m.role === "user" ? "text-right" : ""}>
@@ -86,18 +93,22 @@ export default function AiChatPanel() {
             </div>
             {actions[i] && (
               <div className="mt-1.5">
-                {actions[i]!.ok && actions[i]!.video ? (
+                {actions[i]!.ok && actions[i]!.video && !isPortal ? (
                   <Link
                     to={`/clients/${actions[i]!.video!.client_id}/videos/${actions[i]!.video!.id}`}
                     className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20"
                   >
                     ✓ {actions[i]!.video!.name} — View Video
                   </Link>
+                ) : actions[i]!.ok && actions[i]!.video ? (
+                  <span className="inline-block rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+                    ✓ {actions[i]!.video!.name} updated
+                  </span>
                 ) : actions[i]!.ok && actions[i]!.folder ? (
                   <span className="inline-block rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
-                    ✓ Folder "{actions[i]!.folder!.name}" created
+                    ✓ Folder "{actions[i]!.folder!.name}"
                   </span>
-                ) : actions[i]!.ok && actions[i]!.client ? (
+                ) : actions[i]!.ok && actions[i]!.client && !isPortal ? (
                   <Link
                     to={`/clients/${actions[i]!.client!.id}`}
                     className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20"
@@ -124,7 +135,7 @@ export default function AiChatPanel() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             rows={2}
-            placeholder="Ask me anything, or paste a client message..."
+            placeholder={isPortal ? "Ask me to organize your videos..." : "Ask me anything, or paste a client message..."}
             className="w-full resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
           />
           <button

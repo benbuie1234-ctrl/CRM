@@ -19,12 +19,14 @@ function sortedTree(folders: Folder[], parentId: string | null, depth: number): 
 
 export default function FolderPicker({
   title,
+  rootLabel = "Root",
   folders,
   excludeFolderId,
   onClose,
   onSelect,
 }: {
   title: string;
+  rootLabel?: string;
   folders: Folder[];
   excludeFolderId?: string;
   onClose: () => void;
@@ -42,7 +44,7 @@ export default function FolderPicker({
           onClick={() => onSelect(null)}
           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
         >
-          🏠 Root
+          🏠 {rootLabel}
         </button>
         {rows.map(({ folder, depth }) => (
           <button

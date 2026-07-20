@@ -145,20 +145,51 @@ export const api = {
     request<{ client: { id: string; name: string }; folders: PortalFolder[]; videos: PortalVideo[] }>(
       `/portal/${slug}`
     ),
-  portalCreateFolder: (slug: string, data: { name: string; parent_folder_id?: string | null }) =>
-    request<PortalFolder>(`/portal/${slug}/folders`, { method: "POST", body: JSON.stringify(data) }),
-  portalUpdateFolder: (slug: string, folderId: string, data: { name?: string; parent_folder_id?: string | null }) =>
-    request<PortalFolder>(`/portal/${slug}/folders/${folderId}`, { method: "PATCH", body: JSON.stringify(data) }),
-  portalDeleteFolder: (slug: string, folderId: string) =>
-    request<void>(`/portal/${slug}/folders/${folderId}`, { method: "DELETE" }),
-  portalMoveVideo: (slug: string, videoId: string, folder_id: string | null) =>
-    request<PortalVideo>(`/portal/${slug}/videos/${videoId}`, {
+  portalCreateFolder: async (slug: string, data: { name: string; parent_folder_id?: string | null }) => {
+    const f = await request<PortalFolder>(`/portal/${slug}/folders`, { method: "POST", body: JSON.stringify(data) });
+    notifyDataChanged();
+    return f;
+  },
+  portalUpdateFolder: async (
+    slug: string,
+    folderId: string,
+    data: { name?: string; parent_folder_id?: string | null }
+  ) => {
+    const f = await request<PortalFolder>(`/portal/${slug}/folders/${folderId}`, {
       method: "PATCH",
-      body: JSON.stringify({ folder_id }),
-    }),
+      body: JSON.stringify(data),
+    });
+    notifyDataChanged();
+    return f;
+  },
+  portalDeleteFolder: async (slug: string, folderId: string) => {
+    await request<void>(`/portal/${slug}/folders/${folderId}`, { method: "DELETE" });
+    notifyDataChanged();
+  },
+  portalUpdateVideo: async (
+    slug: string,
+    videoId: string,
+    data: { folder_id?: string | null; status?: string }
+  ) => {
+    const v = await request<PortalVideo>(`/portal/${slug}/videos/${videoId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    notifyDataChanged();
+    return v;
+  },
 
   chat: async (messages: ChatMessage[]) => {
     const res = await request<{ reply: string; action?: ChatAction }>("/ai/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+    });
+    if (res.action?.ok) notifyDataChanged();
+    return res;
+  },
+
+  portalChat: async (slug: string, messages: ChatMessage[]) => {
+    const res = await request<{ reply: string; action?: ChatAction }>(`/portal/${slug}/ai/chat`, {
       method: "POST",
       body: JSON.stringify({ messages }),
     });

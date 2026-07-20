@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, PortalFolder, PortalVideo } from "../lib/api";
-import StatusBadge from "../components/StatusBadge";
+import { api, DATA_CHANGED_EVENT, PortalFolder, PortalVideo } from "../lib/api";
+import StatusDropdown from "../components/StatusDropdown";
 import Modal from "../components/Modal";
 import FolderPicker from "../components/FolderPicker";
+import AiChatPanel from "../components/AiChatPanel";
 import { readDragPayload, setDragPayload } from "../lib/dnd";
+import { VideoStatus } from "../lib/status";
 
 export default function ClientPortal() {
   const { slug } = useParams<{ slug: string }>();
@@ -37,6 +39,11 @@ export default function ClientPortal() {
   }
 
   useEffect(refresh, [slug]);
+
+  useEffect(() => {
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, [slug]);
 
   if (error) {
     return (
@@ -72,6 +79,12 @@ export default function ClientPortal() {
     refresh();
   }
 
+  async function updateVideoStatus(video: PortalVideo, status: VideoStatus) {
+    setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, status } : v)));
+    if (viewingVideo?.id === video.id) setViewingVideo((v) => (v ? { ...v, status } : v));
+    await api.portalUpdateVideo(slug!, video.id, { status });
+  }
+
   async function handleDropOn(targetFolderId: string | null, e: React.DragEvent) {
     e.preventDefault();
     e.stopPropagation();
@@ -84,7 +97,7 @@ export default function ClientPortal() {
       if (payload.kind === "folder") {
         await api.portalUpdateFolder(slug!, payload.id, { parent_folder_id: targetFolderId });
       } else {
-        await api.portalMoveVideo(slug!, payload.id, targetFolderId);
+        await api.portalUpdateVideo(slug!, payload.id, { folder_id: targetFolderId });
       }
       refresh();
     } catch (err) {
@@ -94,8 +107,9 @@ export default function ClientPortal() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 px-6 py-10">
-      <div className="mx-auto max-w-4xl">
+    <div className="flex min-h-screen bg-slate-950">
+      <div className="min-w-0 flex-1 px-6 py-10">
+        <div className="mx-auto max-w-4xl">
         <p className="mb-1 text-sm text-slate-400">Video hub for</p>
         <h1 className="mb-6 text-2xl font-semibold text-slate-100">{client.name}</h1>
 
@@ -113,7 +127,7 @@ export default function ClientPortal() {
                 currentFolderId === null ? "font-semibold text-slate-100" : "text-slate-400 hover:text-slate-200"
               } ${dragOverId === "root" ? "bg-brand-500/20 ring-1 ring-brand-500" : ""}`}
             >
-              🏠 Home
+              🏠 {client.name}
             </button>
             {breadcrumb.map((f, i) => (
               <span key={f.id} className="flex items-center gap-1">
@@ -215,10 +229,10 @@ export default function ClientPortal() {
                 <button onClick={() => setViewingVideo(v)} className="block w-full p-4 pb-2 text-left">
                   <div className="mb-2 text-3xl">🎬</div>
                   <p className="truncate text-sm font-medium text-slate-100">{v.name}</p>
-                  <div className="mt-1">
-                    <StatusBadge status={v.status} />
-                  </div>
                 </button>
+                <div className="px-4 pb-2">
+                  <StatusDropdown status={v.status} onChange={(s) => updateVideoStatus(v, s)} />
+                </div>
                 <div className="border-t border-slate-800 px-4 py-2">
                   <button
                     onClick={() => setMovingVideo(v)}
@@ -231,6 +245,7 @@ export default function ClientPortal() {
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {showNewFolder && (
@@ -260,6 +275,7 @@ export default function ClientPortal() {
       {movingFolder && (
         <FolderPicker
           title={`Move "${movingFolder.name}" to...`}
+          rootLabel={client.name}
           folders={asFolders as any}
           excludeFolderId={movingFolder.id}
           onClose={() => setMovingFolder(null)}
@@ -274,10 +290,11 @@ export default function ClientPortal() {
       {movingVideo && (
         <FolderPicker
           title={`Move "${movingVideo.name}" to...`}
+          rootLabel={client.name}
           folders={asFolders as any}
           onClose={() => setMovingVideo(null)}
           onSelect={async (folderId) => {
-            await api.portalMoveVideo(slug!, movingVideo.id, folderId);
+            await api.portalUpdateVideo(slug!, movingVideo.id, { folder_id: folderId });
             setMovingVideo(null);
             refresh();
           }}
@@ -287,7 +304,7 @@ export default function ClientPortal() {
       {viewingVideo && (
         <Modal title={viewingVideo.name} onClose={() => setViewingVideo(null)}>
           <div className="space-y-4">
-            <StatusBadge status={viewingVideo.status} />
+            <StatusDropdown status={viewingVideo.status} onChange={(s) => updateVideoStatus(viewingVideo, s)} />
             {viewingVideo.instructions && (
               <div>
                 <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Instructions</h3>
@@ -325,6 +342,8 @@ export default function ClientPortal() {
           </div>
         </Modal>
       )}
+
+      <AiChatPanel portalSlug={slug} />
     </div>
   );
 }

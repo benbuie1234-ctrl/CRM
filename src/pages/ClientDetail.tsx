@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, BillingType, Client, DATA_CHANGED_EVENT, Folder, Video } from "../lib/api";
 import Modal from "../components/Modal";
 import FolderPicker from "../components/FolderPicker";
-import StatusBadge from "../components/StatusBadge";
+import StatusDropdown from "../components/StatusDropdown";
+import { VideoStatus } from "../lib/status";
 import { formatMoney } from "../lib/format";
 import { readDragPayload, setDragPayload } from "../lib/dnd";
 
@@ -68,6 +69,11 @@ export default function ClientDetail() {
   async function togglePaid(video: Video, paid: boolean) {
     setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, paid: (paid ? 1 : 0) as 0 | 1 } : v)));
     await api.updateVideo(video.id, { paid: (paid ? 1 : 0) as 0 | 1 });
+  }
+
+  async function updateVideoStatus(video: Video, status: VideoStatus) {
+    setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, status } : v)));
+    await api.updateVideo(video.id, { status });
   }
 
   async function handleDeleteFolder(folder: Folder) {
@@ -314,11 +320,13 @@ export default function ClientDetail() {
                 <div className="mb-1 flex items-center justify-between gap-1">
                   <p className="truncate text-sm font-medium text-slate-100">{v.name}</p>
                 </div>
-                <StatusBadge status={v.status} />
+              </Link>
+              <div className="px-4 pb-2">
+                <StatusDropdown status={v.status} onChange={(s) => updateVideoStatus(v, s)} />
                 <p className="mt-1 text-xs text-slate-400">
                   {v.export_link ? "Final export ready" : v.footage_link ? "Footage linked" : "Not started"}
                 </p>
-              </Link>
+              </div>
               <div className="flex items-center justify-between border-t border-slate-800 px-4 py-2">
                 <span className={`text-xs font-medium ${v.price != null ? "text-slate-300" : "text-slate-600"}`}>
                   {v.price != null ? formatMoney(v.price) : "No price"}
@@ -374,6 +382,7 @@ export default function ClientDetail() {
       {movingFolder && (
         <FolderPicker
           title={`Move "${movingFolder.name}" to...`}
+          rootLabel={client.name}
           folders={folders}
           excludeFolderId={movingFolder.id}
           onClose={() => setMovingFolder(null)}
@@ -388,6 +397,7 @@ export default function ClientDetail() {
       {movingVideo && (
         <FolderPicker
           title={`Move "${movingVideo.name}" to...`}
+          rootLabel={client.name}
           folders={folders}
           onClose={() => setMovingVideo(null)}
           onSelect={async (folderId) => {

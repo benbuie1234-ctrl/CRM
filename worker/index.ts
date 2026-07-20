@@ -504,18 +504,18 @@ async function portalDeleteFolder(env: Env, slug: string, folderId: string): Pro
   return deleteFolder(env, folderId);
 }
 
-async function portalMoveVideo(request: Request, env: Env, slug: string, videoId: string): Promise<Response> {
+async function portalUpdateVideo(request: Request, env: Env, slug: string, videoId: string): Promise<Response> {
   const client = await resolveClientBySlug(env, slug);
   if (!client) return errorResponse("Not found", 404);
 
-  const video = (await env.DB.prepare(`SELECT * FROM videos WHERE id = ? AND client_id = ?`)
+  const existing = (await env.DB.prepare(`SELECT * FROM videos WHERE id = ? AND client_id = ?`)
     .bind(videoId, client.id)
     .first()) as any;
-  if (!video) return errorResponse("Video not found", 404);
+  if (!existing) return errorResponse("Video not found", 404);
 
   const body = (await request.json().catch(() => ({}))) as any;
-  const folderId = body.folder_id || null;
 
+  const folderId = body.folder_id !== undefined ? body.folder_id || null : existing.folder_id;
   if (folderId) {
     const folder = await env.DB.prepare(`SELECT id FROM folders WHERE id = ? AND client_id = ?`)
       .bind(folderId, client.id)
@@ -523,8 +523,20 @@ async function portalMoveVideo(request: Request, env: Env, slug: string, videoId
     if (!folder) return errorResponse("Folder not found", 404);
   }
 
-  await env.DB.prepare(`UPDATE videos SET folder_id = ?, updated_at = datetime('now') WHERE id = ?`)
-    .bind(folderId, videoId)
+  let status = existing.status;
+  let completed_date = existing.completed_date;
+  if (body.status !== undefined) {
+    if (!VALID_STATUSES.includes(body.status)) return errorResponse("Invalid status");
+    status = body.status;
+    if (status === "delivered" && !completed_date) {
+      completed_date = new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE videos SET folder_id = ?, status = ?, completed_date = ?, updated_at = datetime('now') WHERE id = ?`
+  )
+    .bind(folderId, status, completed_date, videoId)
     .run();
 
   const updated = await env.DB.prepare(
@@ -830,8 +842,11 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
     '```action\n{"type":"create_video","client_name":"Acme Fitness","video_name":"Q3 Promo","move_to_folder":"Reels","price":500,"paid":false,"status":"in_progress|review|delivered","instructions":"...","footage_link":"...","export_link":"..."}\n```\n' +
     '```action\n{"type":"update_video","client_name":"Acme Fitness","video_name":"Q3 Promo","new_video_name":"...","paid":true,"price":500,"status":"delivered","move_to_folder":"Reels"}\n```\n' +
     "Only include fields the user actually gave you — never guess or invent values. Never emit more than one action " +
-    "block per reply. If the request is just conversation or answerable from the data above, reply normally with no " +
-    "action block.";
+    "block per reply — if the user's message asks for multiple separate actions (e.g. 'create a folder and move a " +
+    "video into it'), only do the FIRST one, and your confirmation sentence must say only what that one action did " +
+    "plus that you'll do the rest once they confirm/ask (never claim to have done something you didn't actually put " +
+    "in the action block). If the request is just conversation or answerable from the data above, reply normally " +
+    "with no action block.";
 
   const messages = [{ role: "system", content: systemPrompt }, ...history];
 
@@ -854,6 +869,197 @@ async function aiChat(request: Request, env: Env): Promise<Response> {
       const action = JSON.parse(actionBody) as ChatAction;
       if (action && action.type) {
         actionResult = await runChatAction(env, action);
+      }
+    } catch {
+      actionResult = { ok: false, error: "Couldn't understand the action the AI produced — try rephrasing." };
+    }
+  }
+
+  if (!reply) reply = actionResult?.ok ? "Done." : actionResult?.error || "...";
+
+  return json({ reply, action: actionResult });
+}
+
+// ---------- Portal AI chat (scoped to one client, organize-only, never deletes) ----------
+
+type PortalChatAction = {
+  type: "create_folder" | "update_folder" | "move_video" | "update_video_status";
+  folder_name?: string;
+  new_folder_name?: string;
+  parent_folder_name?: string;
+  video_name?: string;
+  status?: string;
+};
+
+function isRootSentinel(name?: string): boolean {
+  if (!name) return true;
+  const n = name.trim().toLowerCase();
+  return n === "" || n === "root" || n === "home";
+}
+
+async function runPortalChatAction(
+  env: Env,
+  clientId: string,
+  action: PortalChatAction
+): Promise<ChatActionResult> {
+  if (action.type === "create_folder") {
+    if (!action.folder_name) return { ok: false, error: "No folder name given" };
+    let parentId: string | null = null;
+    if (action.parent_folder_name && !isRootSentinel(action.parent_folder_name)) {
+      const parent = await findFolderByName(env, clientId, action.parent_folder_name);
+      if (parent === "ambiguous") return { ok: false, error: `Multiple folders match "${action.parent_folder_name}"` };
+      if (!parent) return { ok: false, error: `No folder found matching "${action.parent_folder_name}"` };
+      parentId = parent.id;
+    }
+    const folder = await insertFolderRow(env, clientId, action.folder_name, parentId);
+    return { ok: true, folder };
+  }
+
+  if (action.type === "update_folder") {
+    if (!action.folder_name) return { ok: false, error: "No folder name given" };
+    const match = await findFolderByName(env, clientId, action.folder_name);
+    if (match === "ambiguous") return { ok: false, error: `Multiple folders match "${action.folder_name}"` };
+    if (!match) return { ok: false, error: `No folder found matching "${action.folder_name}"` };
+
+    const existing = (await env.DB.prepare(`SELECT * FROM folders WHERE id = ?`).bind(match.id).first()) as any;
+    const name = action.new_folder_name || existing.name;
+    let parentId = existing.parent_folder_id;
+    if (action.parent_folder_name !== undefined) {
+      if (isRootSentinel(action.parent_folder_name)) {
+        parentId = null;
+      } else {
+        const parent = await findFolderByName(env, clientId, action.parent_folder_name);
+        if (parent === "ambiguous") return { ok: false, error: `Multiple folders match "${action.parent_folder_name}"` };
+        if (!parent) return { ok: false, error: `No folder found matching "${action.parent_folder_name}"` };
+        if (parent.id === match.id) return { ok: false, error: "Can't move a folder into itself" };
+        parentId = parent.id;
+      }
+    }
+    await env.DB.prepare(`UPDATE folders SET name = ?, parent_folder_id = ? WHERE id = ?`)
+      .bind(name.trim(), parentId, match.id)
+      .run();
+    const folder = await env.DB.prepare(`SELECT * FROM folders WHERE id = ?`).bind(match.id).first();
+    return { ok: true, folder };
+  }
+
+  if (action.type === "move_video") {
+    if (!action.video_name) return { ok: false, error: "No video name given" };
+    const match = await findVideoByName(env, clientId, action.video_name);
+    if (match === "ambiguous") return { ok: false, error: `Multiple videos match "${action.video_name}"` };
+    if (!match) return { ok: false, error: `No video found matching "${action.video_name}"` };
+
+    let folderId: string | null = null;
+    if (!isRootSentinel(action.folder_name)) {
+      const folder = await findFolderByName(env, clientId, action.folder_name!);
+      if (folder === "ambiguous") return { ok: false, error: `Multiple folders match "${action.folder_name}"` };
+      if (!folder) return { ok: false, error: `No folder found matching "${action.folder_name}"` };
+      folderId = folder.id;
+    }
+    await env.DB.prepare(`UPDATE videos SET folder_id = ?, updated_at = datetime('now') WHERE id = ?`)
+      .bind(folderId, match.id)
+      .run();
+    const video = await env.DB.prepare(`SELECT * FROM videos WHERE id = ?`).bind(match.id).first();
+    return { ok: true, video };
+  }
+
+  if (action.type === "update_video_status") {
+    if (!action.video_name) return { ok: false, error: "No video name given" };
+    if (!action.status || !VALID_STATUSES.includes(action.status)) return { ok: false, error: "Invalid status" };
+    const match = await findVideoByName(env, clientId, action.video_name);
+    if (match === "ambiguous") return { ok: false, error: `Multiple videos match "${action.video_name}"` };
+    if (!match) return { ok: false, error: `No video found matching "${action.video_name}"` };
+
+    const existing = (await env.DB.prepare(`SELECT completed_date FROM videos WHERE id = ?`).bind(match.id).first()) as any;
+    const completedDate =
+      action.status === "delivered" && !existing.completed_date
+        ? new Date().toISOString().slice(0, 10)
+        : existing.completed_date;
+
+    await env.DB.prepare(
+      `UPDATE videos SET status = ?, completed_date = ?, updated_at = datetime('now') WHERE id = ?`
+    )
+      .bind(action.status, completedDate, match.id)
+      .run();
+    const video = await env.DB.prepare(`SELECT * FROM videos WHERE id = ?`).bind(match.id).first();
+    return { ok: true, video };
+  }
+
+  return { ok: false, error: "Unknown action type" };
+}
+
+async function portalAiChat(request: Request, env: Env, slug: string): Promise<Response> {
+  const client = await resolveClientBySlug(env, slug);
+  if (!client) return errorResponse("Not found", 404);
+
+  const body = (await request.json().catch(() => ({}))) as any;
+  const history = Array.isArray(body.messages) ? body.messages : [];
+  if (history.length === 0) return errorResponse("No messages");
+
+  const { results: folderRows } = await env.DB.prepare(
+    `SELECT name, parent_folder_id FROM folders WHERE client_id = ? ORDER BY name`
+  )
+    .bind(client.id)
+    .all();
+  const { results: videoRows } = await env.DB.prepare(
+    `SELECT v.name, v.status, f.name as folder_name
+     FROM videos v LEFT JOIN folders f ON f.id = v.folder_id
+     WHERE v.client_id = ? ORDER BY v.created_at DESC`
+  )
+    .bind(client.id)
+    .all();
+
+  const folderSummary = (folderRows as any[]).map((f) => `- "${f.name}"`).join("\n");
+  const videoSummary = (videoRows as any[])
+    .map((v) => `- ${v.folder_name ? `"${v.folder_name}"/` : "(unfiled)/"}"${v.name}": status=${v.status}`)
+    .join("\n");
+
+  const systemPrompt =
+    `You are the assistant on ${client.name}'s video hub page — a client-facing portal for a freelance video editor. ` +
+    "You are talking directly to the client, not the editor. You can chat, and you can help them organize their own " +
+    "folders and videos: create folders, rename or move folders, move a video into a folder, and update a video's " +
+    "status (In Progress / Waiting for Review / Posted). " +
+    "\n\nYOUR FOLDERS:\n" + (folderSummary || "(none yet)") +
+    "\n\nYOUR VIDEOS:\n" + (videoSummary || "(none yet)") +
+    "\n\nHARD LIMITS — never violate these: you CANNOT delete anything (no folders, no videos) — tell them to use " +
+    "the delete button themselves. You CANNOT rename, edit, or delete a video itself (name, price, instructions, " +
+    "links are the editor's to manage) — you can only move it between folders and change its status. You have no " +
+    "visibility into pricing, payments, or any other client's data, and cannot create/edit clients. If asked to do " +
+    "anything outside organizing folders and moving/status-updating videos, say you can't do that here.\n\n" +
+    "CRITICAL RULE: do exactly the one thing asked, using only the info given. Don't ask for optional details. Only " +
+    "ask if a required name is missing or a reference is genuinely ambiguous.\n\n" +
+    "After acting, write ONE short confirmation sentence, then end with a fenced code block labeled action containing " +
+    "ONE JSON object:\n" +
+    '```action\n{"type":"create_folder","folder_name":"Reels","parent_folder_name":"..."}\n```\n' +
+    '```action\n{"type":"update_folder","folder_name":"Reels","new_folder_name":"...","parent_folder_name":"root|..."}\n```\n' +
+    '```action\n{"type":"move_video","video_name":"Q3 Promo","folder_name":"Reels|root"}\n```\n' +
+    '```action\n{"type":"update_video_status","video_name":"Q3 Promo","status":"in_progress|review|delivered"}\n```\n' +
+    "Use \"root\" for parent_folder_name/folder_name to mean the top level. Never emit more than one action block — " +
+    "if asked for multiple separate actions in one message (e.g. 'make a folder and move a video into it'), only do " +
+    "the FIRST one and say only what that one action did, plus that you'll do the rest once they ask again (never " +
+    "claim to have done something you didn't actually put in the action block). " +
+    "If it's just conversation, reply normally with no action block.";
+
+  const messages = [{ role: "system", content: systemPrompt }, ...history];
+
+  let result;
+  try {
+    result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { messages, max_tokens: 800 });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "AI request failed";
+    return errorResponse(`AI error: ${message}`, 502);
+  }
+
+  const raw = result.response ?? "";
+  const actionMatch = raw.match(/```action\s*([\s\S]*?)```/);
+  const actionBody = actionMatch ? actionMatch[1].trim() : "";
+  let reply = actionMatch ? raw.slice(0, actionMatch.index).trim() : raw.trim();
+  let actionResult: (ChatActionResult & { error?: string }) | undefined;
+
+  if (actionBody) {
+    try {
+      const action = JSON.parse(actionBody) as PortalChatAction;
+      if (action && action.type) {
+        actionResult = await runPortalChatAction(env, client.id, action);
       }
     } catch {
       actionResult = { ok: false, error: "Couldn't understand the action the AI produced — try rephrasing." };
@@ -906,7 +1112,12 @@ export default {
     }
     const portalVideoMatch = path.match(/^\/api\/portal\/([^/]+)\/videos\/([^/]+)$/);
     if (portalVideoMatch && method === "PATCH") {
-      return portalMoveVideo(request, env, portalVideoMatch[1], portalVideoMatch[2]);
+      return portalUpdateVideo(request, env, portalVideoMatch[1], portalVideoMatch[2]);
+    }
+
+    const portalAiMatch = path.match(/^\/api\/portal\/([^/]+)\/ai\/chat$/);
+    if (portalAiMatch && method === "POST") {
+      return portalAiChat(request, env, portalAiMatch[1]);
     }
 
     if (!(await isAuthed(request, env))) {
